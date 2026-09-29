@@ -1,0 +1,42 @@
+@import "tailwindcss";
+
+/* Colores de la app. Cada negocio podrá cambiar "primario" desde sus ajustes (Fase 4). */
+:root {
+  --fondo: #f6f7f9;
+  --superficie: #ffffff;
+  --texto: #16181d;
+  --texto-suave: #5b6270;
+  --borde: #e2e5ea;
+  --primario: #2563eb;
+  --primario-texto: #ffffff;
+  --peligro: #c2410c;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fondo: #0f1115;
+    --superficie: #171a21;
+    --texto: #eceef2;
+    --texto-suave: #9aa1ad;
+    --borde: #2a2f39;
+    --primario: #5b8def;
+    --peligro: #fb923c;
+  }
+}
+
+@theme inline {
+  --color-fondo: var(--fondo);
+  --color-superficie: var(--superficie);
+  --color-texto: var(--texto);
+  --color-texto-suave: var(--texto-suave);
+  --color-borde: var(--borde);
+  --color-primario: var(--primario);
+  --color-primario-texto: var(--primario-texto);
+  --color-peligro: var(--peligro);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+body {
+  background: var(--fondo);
+  color: var(--texto);
+}
