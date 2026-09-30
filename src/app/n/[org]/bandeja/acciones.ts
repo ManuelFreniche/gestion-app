@@ -21,7 +21,8 @@ export type ResultadoSubida = {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 async function textoDelPdf(bytes: Uint8Array): Promise<string> {
-  const pdf = await getDocumentProxy(bytes);
+  // pdf.js se queda con el buffer que recibe: se le pasa una copia para poder reutilizar el original.
+  const pdf = await getDocumentProxy(new Uint8Array(bytes));
   const { text } = await extractText(pdf, { mergePages: true });
   return text;
 }
