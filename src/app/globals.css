@@ -10,6 +10,7 @@
   --primario: #2563eb;
   --primario-texto: #ffffff;
   --peligro: #c2410c;
+  --exito: #15803d;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -21,6 +22,7 @@
     --borde: #2a2f39;
     --primario: #5b8def;
     --peligro: #fb923c;
+    --exito: #4ade80;
   }
 }
 
@@ -33,6 +35,7 @@
   --color-primario: var(--primario);
   --color-primario-texto: var(--primario-texto);
   --color-peligro: var(--peligro);
+  --color-exito: var(--exito);
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 

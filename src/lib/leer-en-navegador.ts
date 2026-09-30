@@ -90,14 +90,14 @@ export async function leerTextoEnNavegador(archivo: File): Promise<string> {
 // imágenes pequeñas de sus páginas: la IA las lee directamente, sin esperar a ningún OCR.
 
 const MIN_TEXTO_IA = 300; // con menos texto que esto, el PDF se considera escaneado
-const PAGINAS_TEXTO = 12;
-const PAGINAS_IMAGEN = 4;
-const LADO_IA = 1600;
+const PAGINAS_TEXTO = 30;
+const PAGINAS_IMAGEN = 8;
+const LADO_IA = 1400;
 const MAX_BASE64_TOTAL = 3_300_000; // la petición a Vercel admite 4,5 MB
 
 export type DocumentoPreparado = { texto: string; imagenes: string[]; paginas?: string[] };
 
-function jpegBase64(lienzo: HTMLCanvasElement, calidad = 0.72): string {
+function jpegBase64(lienzo: HTMLCanvasElement, calidad = 0.68): string {
   return lienzo.toDataURL("image/jpeg", calidad).split(",")[1] ?? "";
 }
 

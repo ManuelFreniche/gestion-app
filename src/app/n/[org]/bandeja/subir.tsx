@@ -1,16 +1,11 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { Boton, Campo, Etiqueta } from "@/components/ui";
 import { leerTextoEnNavegador, prepararDocumento } from "@/lib/leer-en-navegador";
-import { crearClienteNavegador } from "@/lib/supabase/cliente";
 import type { ResultadoSubida } from "@/lib/registrar-documento";
-
-// Cuántos documentos se leen a la vez.
-const A_LA_VEZ = 3;
-
-const conTiempo = <T,>(promesa: Promise<T>, ms: number, alternativa: T) =>
-  Promise.race([promesa, new Promise<T>((resolver) => setTimeout(() => resolver(alternativa), ms))]);
+import { crearClienteNavegador } from "@/lib/supabase/cliente";
 
 const EXTENSION: Record<string, string> = {
   "application/pdf": "pdf",
@@ -20,37 +15,65 @@ const EXTENSION: Record<string, string> = {
   "image/heic": "heic",
 };
 
-type Resultado = { nombre: string; tono: "bien" | "revisar" | "error" | "repetido"; texto: string };
+// Cuántos documentos se leen a la vez.
+const A_LA_VEZ = 3;
 
-// Sube los tickets directamente a Storage (así no importa que la foto pese). Se pueden
-// arrastrar varios a la vez. Si el ticket se lee bien, el cierre se mete solo; si no,
-// queda en la lista de abajo para revisarlo.
+const conTiempo = <T,>(promesa: Promise<T>, ms: number, alternativa: T) =>
+  Promise.race([promesa, new Promise<T>((resolver) => setTimeout(() => resolver(alternativa), ms))]);
+
+type Fase = "cola" | "subiendo" | "leyendo" | "bien" | "revisar" | "repetido" | "error";
+type Fila = { nombre: string; fase: Fase; texto?: string };
+
+const TEXTO_FASE: Partial<Record<Fase, string>> = {
+  cola: "Esperando su turno…",
+  subiendo: "Subiendo el archivo…",
+  leyendo: "Leyendo todas las páginas…",
+};
+
+function Icono({ fase }: { fase: Fase }) {
+  if (fase === "cola") return <span aria-hidden className="size-6 rounded-full border-2 border-borde" />;
+  if (fase === "subiendo" || fase === "leyendo")
+    return <span aria-hidden className="size-6 animate-spin rounded-full border-2 border-borde border-t-primario" />;
+  const [color, simbolo] =
+    fase === "bien" ? ["bg-exito text-superficie", "✓"] : fase === "revisar" ? ["bg-primario text-primario-texto", "→"] : fase === "repetido" ? ["bg-texto-suave text-superficie", "="] : ["bg-peligro text-superficie", "!"];
+  return (
+    <span aria-hidden className={`flex size-6 items-center justify-center rounded-full text-sm font-bold ${color}`}>
+      {simbolo}
+    </span>
+  );
+}
+
+// Sube los documentos directamente a Storage (así no importa que pesen), los prepara en este
+// dispositivo y el servidor los lee. Se pueden soltar varios a la vez y cada uno muestra en qué
+// paso va. Lo leído aparece debajo para que tú decidas si se mete.
 export function SubirTickets({ org, hoy }: { org: string; hoy: string }) {
+  const router = useRouter();
   const entrada = useRef<HTMLInputElement>(null);
   const [arrastrando, setArrastrando] = useState(false);
-  const [progreso, setProgreso] = useState<{ hecho: number; total: number } | null>(null);
+  const [filas, setFilas] = useState<Fila[]>([]);
+  const [trabajando, setTrabajando] = useState(false);
   const [fecha, setFecha] = useState(hoy);
-  const [resultados, setResultados] = useState<Resultado[]>([]);
-  const subiendo = progreso !== null;
+
+  const cambiar = (indice: number, cambio: Partial<Fila>) =>
+    setFilas((actuales) => actuales.map((f, i) => (i === indice ? { ...f, ...cambio } : f)));
 
   async function subir(archivos: File[]) {
-    if (archivos.length === 0 || subiendo) return;
-    setResultados([]);
-    setProgreso({ hecho: 0, total: archivos.length });
+    if (archivos.length === 0 || trabajando) return;
+    setTrabajando(true);
+    setFilas(archivos.map((a) => ({ nombre: a.name, fase: "cola" })));
     const supabase = crearClienteNavegador();
-    const nuevos: Resultado[] = [];
 
-    // Cada documento se sube, se prepara en este dispositivo y lo lee el servidor. Varios a la vez.
-    const hechos: Resultado[] = new Array(archivos.length);
-    let siguiente = 0;
-    let terminados = 0;
-    const leerUno = async (archivo: File): Promise<Resultado> => {
+    const leerUno = async (archivo: File, indice: number) => {
+      const fin = (fase: Fase, texto: string) => cambiar(indice, { fase, texto });
       const extension = EXTENSION[archivo.type];
-      if (!extension) return { nombre: archivo.name, tono: "error", texto: "Solo se pueden subir PDF o fotos (JPG, PNG)." };
+      if (!extension) return fin("error", "Solo se pueden subir PDF o fotos (JPG, PNG).");
+
+      cambiar(indice, { fase: "subiendo" });
       const ruta = `${org}/${crypto.randomUUID()}.${extension}`;
       const subida = await supabase.storage.from("documentos").upload(ruta, archivo, { contentType: archivo.type });
-      if (subida.error) return { nombre: archivo.name, tono: "error", texto: "No se pudo subir. Inténtalo de nuevo." };
+      if (subida.error) return fin("error", "No se pudo subir. Inténtalo de nuevo.");
 
+      cambiar(indice, { fase: "leyendo" });
       const enviar = (extra: { texto: string; imagenes: string[]; paginas?: string[]; ocrHecho?: boolean }): Promise<ResultadoSubida> =>
         fetch("/api/documentos", {
           method: "POST",
@@ -66,7 +89,7 @@ export function SubirTickets({ org, hoy }: { org: string; hoy: string }) {
           }),
         })
           .then((r) => r.json() as Promise<ResultadoSubida>)
-          .catch(() => ({ error: "Tardó demasiado en leerlo. Recarga la página: si se guardó, estará en la bandeja." }));
+          .catch(() => ({ error: "Tardó demasiado en leerlo. Recarga la página: si se guardó, estará abajo." }));
 
       const preparado = await conTiempo(prepararDocumento(archivo).catch(() => null), 30_000, null);
       let resultado = await enviar(preparado ?? { texto: "", imagenes: [] });
@@ -75,30 +98,28 @@ export function SubirTickets({ org, hoy }: { org: string; hoy: string }) {
         const texto = await conTiempo(leerTextoEnNavegador(archivo).catch(() => ""), 60_000, "");
         resultado = await enviar({ texto, imagenes: [], ocrHecho: true });
       }
-      if (resultado.error) return { nombre: archivo.name, tono: "error", texto: resultado.error };
-      if (resultado.estado === "repetido") return { nombre: archivo.name, tono: "repetido", texto: "Ya lo tenías: lo he ignorado." };
-      if (resultado.estado === "metido") return { nombre: archivo.name, tono: "bien", texto: resultado.detalle ?? "Metido." };
-      return { nombre: archivo.name, tono: "revisar", texto: resultado.detalle ?? "Falta revisarlo: míralo abajo." };
+      if (resultado.error) fin("error", resultado.error);
+      else if (resultado.estado === "repetido") fin("repetido", "Ya la tenías guardada. No hago nada.");
+      else if (resultado.estado === "metido") fin("bien", resultado.detalle ?? "Metido.");
+      else fin("revisar", resultado.detalle ?? "Léela abajo y decide si la metes.");
+      router.refresh(); // las tarjetas de abajo aparecen según se van leyendo
     };
+
+    let siguiente = 0;
     await Promise.all(
       Array.from({ length: Math.min(A_LA_VEZ, archivos.length) }, async () => {
         while (siguiente < archivos.length) {
           const indice = siguiente++;
-          hechos[indice] = await leerUno(archivos[indice]);
-          terminados++;
-          setProgreso({ hecho: terminados, total: archivos.length });
+          await leerUno(archivos[indice], indice);
         }
       }),
     );
-    nuevos.push(...hechos);
-
-    setResultados(nuevos);
-    setProgreso(null);
+    setTrabajando(false);
     if (entrada.current) entrada.current.value = "";
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-5">
       <input
         ref={entrada}
         type="file"
@@ -119,50 +140,44 @@ export function SubirTickets({ org, hoy }: { org: string; hoy: string }) {
           setArrastrando(false);
           subir(Array.from(e.dataTransfer.files));
         }}
-        className={`flex flex-col items-center gap-3 rounded-xl border-2 border-dashed px-4 py-8 text-center transition ${
+        className={`flex flex-col items-center gap-3 rounded-2xl border-2 border-dashed px-4 py-8 text-center transition ${
           arrastrando ? "border-primario bg-primario/10" : "border-borde"
         }`}
       >
-        <p className="font-medium">
-          {subiendo
-            ? `Leyendo ${Math.min(progreso.hecho + 1, progreso.total)} de ${progreso.total}…`
-            : arrastrando
-              ? "Suéltalos aquí"
-              : "Arrastra aquí los tickets"}
+        <p className="text-xl font-semibold">{arrastrando ? "Suéltalos aquí" : "Sube tus facturas o tickets"}</p>
+        <p className="max-w-sm text-base text-texto-suave">
+          Elige los archivos (PDF o foto, todos los que quieras). Yo los leo y tú decides cuáles se meten.
         </p>
-        <p className="text-sm text-texto-suave">PDF o foto. Puedes soltar varios a la vez.</p>
-        <Boton type="button" disabled={subiendo} onClick={() => entrada.current?.click()} className="h-14 text-base">
-          Elegir archivos
+        <Boton type="button" disabled={trabajando} onClick={() => entrada.current?.click()} className="mt-1 h-16 w-full max-w-xs text-lg">
+          {trabajando ? "Leyendo…" : "Elegir archivos"}
         </Boton>
       </div>
 
-      <div className="flex flex-col gap-1.5">
-        <Etiqueta htmlFor="fecha-subida" className="text-sm">
-          Si subes un solo ticket y no trae fecha, se guarda con este día
-        </Etiqueta>
-        <Campo id="fecha-subida" type="date" value={fecha} max={hoy} onChange={(e) => setFecha(e.target.value || hoy)} />
-      </div>
-
-      {resultados.length > 0 && (
+      {filas.length > 0 && (
         <ul role="status" className="flex flex-col gap-2">
-          {resultados.map((r, i) => (
-            <li
-              key={`${r.nombre}-${i}`}
-              className={`rounded-lg px-3 py-2 text-sm ${
-                r.tono === "bien"
-                  ? "bg-primario/10"
-                  : r.tono === "revisar" || r.tono === "repetido"
-                    ? "bg-superficie ring-1 ring-borde"
-                    : "bg-peligro/10 text-peligro"
-              }`}
-            >
-              <span className="font-medium">{r.nombre}</span>
-              <br />
-              {r.texto}
+          {filas.map((f, i) => (
+            <li key={`${f.nombre}-${i}`} className="flex items-start gap-3 rounded-xl bg-fondo px-4 py-3 ring-1 ring-borde">
+              <Icono fase={f.fase} />
+              <div className="flex min-w-0 flex-col">
+                <span className="truncate text-base font-medium">{f.nombre}</span>
+                <span className={`text-base ${f.fase === "error" ? "text-peligro" : "text-texto-suave"}`}>
+                  {f.texto ?? TEXTO_FASE[f.fase]}
+                </span>
+              </div>
             </li>
           ))}
         </ul>
       )}
+
+      <details className="text-base">
+        <summary className="cursor-pointer text-texto-suave">Es un ticket de caja sin fecha</summary>
+        <div className="mt-2 flex flex-col gap-1.5">
+          <Etiqueta htmlFor="fecha-subida" className="text-base">
+            Si subes un solo ticket y no trae fecha, se guarda con este día
+          </Etiqueta>
+          <Campo id="fecha-subida" type="date" value={fecha} max={hoy} onChange={(e) => setFecha(e.target.value || hoy)} />
+        </div>
+      </details>
     </div>
   );
 }

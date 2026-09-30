@@ -25,6 +25,7 @@ const DESCRIPCION = `Esto es un documento de un negocio (una heladería/obrador)
 - "ticket_cierre": el ticket "Estado de la caja" de cierre del día. Da en "ticket": venta (Total Tickets + Total Facturas), efectivo, banco (tarjeta) y fecha (aaaa-mm-dd solo si se ve claro).
 - "facturas": una o VARIAS facturas o albaranes de proveedores (un mismo archivo puede traer muchas, una por página o seguidas). Devuelve UNA entrada por cada factura o albarán distinto.
 - "otro": cualquier otra cosa.
+El documento puede tener VARIAS PÁGINAS: lee todas. Una factura puede ocupar varias páginas (entonces es una sola entrada, con un solo total), y una página puede traer una factura entera. Nunca dejes facturas sin devolver ni mezcles dos facturas en una.
 Para cada factura: proveedor (quien vende, NO el cliente; Alpino's / Manuel Freniche es el cliente), numero, fecha (aaaa-mm-dd), base_imponible, total (con IVA, el importe a pagar), categoria (Materia prima: alimentos y bebidas para vender o elaborar; Suministros: material, envases, limpieza, luz, agua; Alquiler; Nóminas; Otros) y lineas.
 Cada línea: descripcion (producto, corta), cantidad, unidad (ud, kg, l, caja…), precio_unitario (sin IVA, por unidad, como figura en la factura) e importe (de la línea, sin IVA).
 Importes como números con punto decimal. Si un dato no se ve con claridad, pon null. No inventes nada. Si no hay líneas legibles, deja lineas vacío.`;

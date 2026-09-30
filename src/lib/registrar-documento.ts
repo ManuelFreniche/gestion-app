@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { extractText, getDocumentProxy } from "unpdf";
 import { esFecha, euros, fechaLarga, hoyEn } from "./cierre";
-import { facturaDesdeReglas, facturaFiable, leerFactura, leerFacturasPorPaginas, type FacturaDatos } from "./factura";
+import { facturaDesdeReglas, leerFactura, leerFacturasPorPaginas, type FacturaDatos } from "./factura";
 import { hayIA, leerDocumentoConIA } from "./leer-documento-ia";
 import { crearClienteServidor } from "./supabase/server";
 import { leerTicketCierre, type TicketCierre } from "./ticket-cierre";
@@ -77,7 +77,7 @@ export async function registrarDocumento(entrada: {
   }
 
   const esPdf = tipoArchivo === "application/pdf";
-  const imagenes = (entrada.imagenes ?? []).slice(0, 6);
+  const imagenes = (entrada.imagenes ?? []).slice(0, 8);
   let textoLeido = (entrada.texto ?? "").slice(0, 20_000);
   let lectura: TicketCierre | null = textoLeido ? leerTicketCierre(textoLeido) : null;
   if (!lectura && !textoLeido.trim() && esPdf) {
@@ -122,8 +122,8 @@ export async function registrarDocumento(entrada: {
     : tipo === "factura"
       ? [
           facturas.length > 0
-            ? "Parece una factura, pero revisa estos datos antes de meterla."
-            : "No he reconocido los datos de la factura: escríbelos mirando el documento.",
+            ? `Leída: ${plural(facturas.length, "factura", "facturas")} · total ${euros(facturas.reduce((t, f) => t + (f.importe ?? 0), 0))}. Revísala abajo y decide si la metes.`
+            : "No he conseguido leer los datos: escríbelos mirando el documento.",
           sinIA,
           motivoFallo,
         ]
@@ -189,8 +189,8 @@ export async function registrarDocumento(entrada: {
 
   revalidatePath(`/n/${org}/bandeja`);
 
-  const metible = lectura !== null || (facturas.length > 0 && facturas.every((f) => f.proveedor));
-  if (metible) {
+  // Solo el ticket de cierre se mete solo. Las facturas las mete siempre una persona.
+  if (lectura !== null) {
     const { data: fila } = await supabase
       .from("documentos_entrantes")
       .select("id")
@@ -222,23 +222,6 @@ export async function registrarDocumento(entrada: {
         return { estado: "metido", detalle: `Metido en el cierre · ${fechaLarga(fecha)}: ${euros(venta)}` };
       }
       // Sin permiso para aprobar (p. ej. un empleado), queda pendiente de revisión.
-    }
-
-    // Facturas: se meten solas si todas están completas y sus líneas cuadran.
-    if (tipo === "factura" && facturas.every((f) => facturaFiable(f, hoy))) {
-      const { error: errorFacturas } = await supabase.rpc("registrar_facturas", {
-        p_documento: fila.id,
-        p_facturas: facturas as never,
-      });
-      if (!errorFacturas) {
-        revalidatePath(`/n/${org}/facturas`);
-        const total = facturas.reduce((t, f) => t + (f.importe ?? 0), 0);
-        const proveedores = [...new Set(facturas.map((f) => f.proveedor))].join(", ");
-        return {
-          estado: "metido",
-          detalle: `${plural(facturas.length, "factura", "facturas")} de ${proveedores} · total ${euros(total)}`,
-        };
-      }
     }
   }
 

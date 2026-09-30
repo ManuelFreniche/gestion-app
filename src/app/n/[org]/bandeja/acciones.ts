@@ -105,7 +105,7 @@ export async function aprobarFacturas(_: EstadoBandeja, formData: FormData): Pro
     };
   }
 
-  revalidatePath(`/n/${org}/bandeja`);
+  // La tarjeta se queda mostrando "Hecho" con un enlace; la bandeja se actualiza al volver a entrar.
   revalidatePath(`/n/${org}/facturas`);
   return { ok: true };
 }
@@ -146,6 +146,7 @@ export async function descartarDocumento(_: EstadoBandeja, formData: FormData): 
 
   if (error) return { error: "No se pudo descartar. Inténtalo de nuevo." };
 
-  revalidatePath(`/n/${org}/bandeja`);
+  // Las facturas muestran "Descartada" en su propia tarjeta; el resto desaparece de la lista.
+  if (formData.get("mantener") !== "1") revalidatePath(`/n/${org}/bandeja`);
   return { ok: true };
 }
