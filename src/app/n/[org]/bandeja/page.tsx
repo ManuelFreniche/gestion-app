@@ -5,7 +5,7 @@ import type { FacturaDatos } from "@/lib/factura";
 import { hayIA } from "@/lib/leer-documento-ia";
 import { exigirPermiso } from "@/lib/negocio";
 import { crearClienteServidor } from "@/lib/supabase/server";
-import { configCorreo } from "@/lib/correo";
+import { faltanVariablesCorreo } from "@/lib/correo";
 import { RevisarCorreo } from "./revisar-correo";
 import { SubirTickets } from "./subir";
 import { TarjetaDocumento, type DocumentoPendiente } from "./tarjeta";
@@ -96,10 +96,19 @@ export default async function PaginaBandeja({ params }: PageProps<"/n/[org]/band
         <SubirTickets org={org} hoy={hoyEn(zona)} lectorDirecto={Boolean(process.env.GEMINI_API_KEY)} />
       </Tarjeta>
 
-      {configCorreo()?.organizacion === org && (
+      {faltanVariablesCorreo(org).length === 0 ? (
         <Tarjeta>
           <RevisarCorreo org={org} />
         </Tarjeta>
+      ) : (
+        negocio.rol === "dueno" && (
+          <Tarjeta>
+            <p className="text-base font-semibold">Correo sin conectar</p>
+            <p className="mt-1 text-base text-texto-suave">
+              Para que las facturas de tu correo lleguen solas, en Vercel falta: {faltanVariablesCorreo(org).join(", ")}. Después, haz Redeploy.
+            </p>
+          </Tarjeta>
+        )
       )}
 
       {documentos.length > 0 && <h2 className="text-2xl font-bold">Por revisar ({documentos.length})</h2>}

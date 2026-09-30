@@ -35,6 +35,13 @@ export function configCorreo(): ConfigCorreo | null {
   return { usuario, clave, organizacion, ...(etiqueta && { etiqueta }), dias };
 }
 
+// Para explicar en la Bandeja por qué el correo no está conectado (solo nombres, nunca valores).
+export function faltanVariablesCorreo(org: string): string[] {
+  const faltan = ["GMAIL_USUARIO", "GMAIL_CLAVE_APP", "CORREO_ORGANIZACION"].filter((n) => !process.env[n]?.trim());
+  if (faltan.length === 0 && process.env.CORREO_ORGANIZACION?.trim() !== org) faltan.push("CORREO_ORGANIZACION (no es el id de este negocio)");
+  return faltan;
+}
+
 export type AdjuntoCorreo = { nombre: string; tipo: string; bytes: Uint8Array };
 
 type AdjuntoBruto = { filename?: string; contentType: string; size: number; content: Buffer; related?: boolean };

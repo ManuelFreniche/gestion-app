@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { adjuntosAprovechables, configCorreo } from "../correo";
+import { adjuntosAprovechables, configCorreo, faltanVariablesCorreo } from "../correo";
 
 const adjunto = (filename: string, contentType: string, size: number, related = false) => ({
   filename,
@@ -48,6 +48,23 @@ describe("configCorreo", () => {
     process.env.GMAIL_CLAVE_APP = "abcd efgh ijkl mnop";
     process.env.CORREO_ORGANIZACION = "org-1";
     expect(configCorreo()).toMatchObject({ usuario: "a@gmail.com", clave: "abcdefghijklmnop", organizacion: "org-1", dias: 14 });
+    process.env = antes;
+  });
+});
+
+describe("faltanVariablesCorreo", () => {
+  it("dice qué variables faltan y si el negocio no coincide", () => {
+    const antes = { ...process.env };
+    delete process.env.GMAIL_USUARIO;
+    delete process.env.GMAIL_CLAVE_APP;
+    delete process.env.CORREO_ORGANIZACION;
+    expect(faltanVariablesCorreo("org-1")).toHaveLength(3);
+    process.env.GMAIL_USUARIO = "a@gmail.com";
+    process.env.GMAIL_CLAVE_APP = "x";
+    process.env.CORREO_ORGANIZACION = "org-2";
+    expect(faltanVariablesCorreo("org-1")[0]).toContain("no es el id");
+    process.env.CORREO_ORGANIZACION = "org-1";
+    expect(faltanVariablesCorreo("org-1")).toEqual([]);
     process.env = antes;
   });
 });
