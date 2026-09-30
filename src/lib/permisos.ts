@@ -43,6 +43,12 @@ export const MODULOS: Modulo[] = [
     permisoVer: "facturas.ver",
   },
   {
+    clave: "bandeja",
+    nombre: "Bandeja",
+    descripcion: "Tickets y facturas por revisar: míralos y decide cuáles se meten.",
+    permisoVer: "documentos.revisar",
+  },
+  {
     clave: "margenes",
     nombre: "Márgenes",
     descripcion: "Coste y precio de cada producto.",
