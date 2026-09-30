@@ -169,9 +169,7 @@ export async function leerTicketConIA(bytes: Uint8Array, tipo: string): Promise<
   // Con clave de NVIDIA (gratis) se usa primero; si no lee nada, se prueba con Claude si hay clave.
   const nvidia = process.env.NVIDIA_API_KEY;
   const claude = process.env.ANTHROPIC_API_KEY;
-  if (!nvidia && !claude) {
-    return { ticket: null, motivo: "Falta la clave NVIDIA_API_KEY en Vercel (y volver a desplegar para que la use)." };
-  }
+  if (!nvidia && !claude) return { ticket: null };
   let motivo: string | undefined;
   if (nvidia) {
     const lectura = await leerConNvidia(bytes, tipo, nvidia);

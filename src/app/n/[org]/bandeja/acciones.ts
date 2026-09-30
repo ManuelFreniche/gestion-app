@@ -6,6 +6,7 @@ import { extractText, getDocumentProxy } from "unpdf";
 import { esFecha, euros, fechaLarga, hoyEn, leerImporte } from "@/lib/cierre";
 import { crearClienteServidor } from "@/lib/supabase/server";
 import { leerTicketConIA } from "@/lib/leer-ticket-ia";
+import { textoDeImagen, textoDePdfEscaneado } from "@/lib/ocr";
 import { leerTicketCierre, type TicketCierre } from "@/lib/ticket-cierre";
 
 export type EstadoBandeja = { error?: string; ok?: boolean };
@@ -49,13 +50,26 @@ export async function registrarDocumento(entrada: {
   const bytes = new Uint8Array(await descarga.data.arrayBuffer());
   const huella = createHash("sha256").update(bytes).digest("hex");
 
-  // Primero el texto del PDF (gratis y exacto); si no hay texto o es una foto, lo lee Claude.
+  // 1) Texto del PDF (exacto). 2) OCR gratuito y local para fotos y PDFs escaneados.
+  // 3) IA de visión (NVIDIA gratis o Claude) si hay clave. Siempre se revisa a mano si nada lee.
+  const esPdf = tipoArchivo === "application/pdf";
   let lectura: TicketCierre | null = null;
-  if (tipoArchivo === "application/pdf") {
+  let textoLeido = "";
+  if (esPdf) {
     try {
-      lectura = leerTicketCierre(await textoDelPdf(bytes));
+      textoLeido = await textoDelPdf(bytes);
+      lectura = leerTicketCierre(textoLeido);
     } catch {
-      // PDF sin texto legible: se prueba con Claude.
+      // PDF sin texto legible: se prueba con OCR.
+    }
+  }
+  if (!lectura) {
+    try {
+      const ocr = esPdf ? await textoDePdfEscaneado(bytes) : await textoDeImagen(bytes);
+      textoLeido = textoLeido ? `${textoLeido}\n${ocr}` : ocr;
+      lectura = leerTicketCierre(ocr);
+    } catch {
+      // Si el OCR falla, se sigue con la IA o a mano.
     }
   }
   let motivoFallo: string | undefined;
@@ -64,7 +78,9 @@ export async function registrarDocumento(entrada: {
     lectura = ia.ticket;
     motivoFallo = ia.motivo;
   }
-  const avisoLectura = motivoFallo ? `No se pudo leer solo. ${motivoFallo}` : undefined;
+  const avisoLectura = lectura
+    ? undefined
+    : ["No se pudo leer solo: no reconozco el formato del ticket.", motivoFallo].filter(Boolean).join(" ");
 
   const datos: Record<string, string | number> = {};
   if (lectura) {
@@ -72,6 +88,9 @@ export async function registrarDocumento(entrada: {
     if (lectura.efectivo !== null) datos.efectivo = lectura.efectivo;
     if (lectura.banco !== null) datos.banco = lectura.banco;
     if (lectura.fecha) datos.fecha = lectura.fecha;
+  } else if (textoLeido.trim()) {
+    // Para poder ver qué texto se leyó cuando el formato no se reconoce.
+    datos.texto_leido = textoLeido.replace(/\s+/g, " ").trim().slice(0, 1500);
   }
 
   // Sin .select(): quien sube pero no revisa (p. ej. un empleado) no puede leer la fila.
@@ -106,7 +125,7 @@ export async function registrarDocumento(entrada: {
             estado: "pendiente",
             revisado_en: null,
             revisado_por: null,
-            ...(lectura && { datos }),
+            ...(Object.keys(datos).length > 0 && { datos }),
           })
           .eq("id", previo.id);
         if (errorRecuperar) return { estado: "repetido" };
