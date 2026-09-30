@@ -6,6 +6,9 @@ import { crearClienteServidor } from "@/lib/supabase/server";
 import { SubirTickets } from "./subir";
 import { TarjetaDocumento, type DocumentoPendiente } from "./tarjeta";
 
+// Leer una foto con Claude puede tardar unos segundos.
+export const maxDuration = 60;
+
 // Bandeja de revisión: cada documento se ve abierto en la pantalla y una persona decide
 // si se mete o no. Nada entra en las cuentas sin pasar por aquí.
 export default async function PaginaBandeja({ params }: PageProps<"/n/[org]/bandeja">) {

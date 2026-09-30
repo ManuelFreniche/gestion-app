@@ -5,7 +5,8 @@ import { revalidatePath } from "next/cache";
 import { extractText, getDocumentProxy } from "unpdf";
 import { esFecha, euros, fechaLarga, hoyEn, leerImporte } from "@/lib/cierre";
 import { crearClienteServidor } from "@/lib/supabase/server";
-import { leerTicketCierre } from "@/lib/ticket-cierre";
+import { leerTicketConIA } from "@/lib/leer-ticket-ia";
+import { leerTicketCierre, type TicketCierre } from "@/lib/ticket-cierre";
 
 export type EstadoBandeja = { error?: string; ok?: boolean };
 
@@ -48,19 +49,23 @@ export async function registrarDocumento(entrada: {
   const bytes = new Uint8Array(await descarga.data.arrayBuffer());
   const huella = createHash("sha256").update(bytes).digest("hex");
 
-  let datos: Record<string, string | number> = {};
+  // Primero el texto del PDF (gratis y exacto); si no hay texto o es una foto, lo lee Claude.
+  let lectura: TicketCierre | null = null;
   if (tipoArchivo === "application/pdf") {
     try {
-      const lectura = leerTicketCierre(await textoDelPdf(bytes));
-      if (lectura) {
-        datos = { venta: lectura.venta };
-        if (lectura.efectivo !== null) datos.efectivo = lectura.efectivo;
-        if (lectura.banco !== null) datos.banco = lectura.banco;
-        if (lectura.fecha) datos.fecha = lectura.fecha;
-      }
+      lectura = leerTicketCierre(await textoDelPdf(bytes));
     } catch {
-      // Si el PDF no se puede leer, la persona escribe los datos a mano al revisarlo.
+      // PDF sin texto legible: se prueba con Claude.
     }
+  }
+  if (!lectura) lectura = await leerTicketConIA(bytes, tipoArchivo);
+
+  const datos: Record<string, string | number> = {};
+  if (lectura) {
+    datos.venta = lectura.venta;
+    if (lectura.efectivo !== null) datos.efectivo = lectura.efectivo;
+    if (lectura.banco !== null) datos.banco = lectura.banco;
+    if (lectura.fecha) datos.fecha = lectura.fecha;
   }
 
   // Sin .select(): quien sube pero no revisa (p. ej. un empleado) no puede leer la fila.
@@ -75,6 +80,7 @@ export async function registrarDocumento(entrada: {
     datos,
   });
 
+  let recuperado = false;
   if (error) {
     if (error.code === "23505") {
       // La copia recién subida sobra: el original ya está guardado.
@@ -85,21 +91,28 @@ export async function registrarDocumento(entrada: {
         .eq("organizacion_id", org)
         .eq("huella", huella)
         .maybeSingle();
-      // Si lo habías descartado, no se vuelve a descartar solo: vuelve a la bandeja para que decidas.
-      if (previo?.estado === "descartado") {
+      if (previo?.estado === "descartado" || (previo?.estado === "pendiente" && lectura)) {
+        // Lo descartado no se vuelve a descartar solo: vuelve a la bandeja para que decidas.
+        // Si ahora se lee y antes no, se actualizan los datos leídos.
         const { error: errorRecuperar } = await supabase
           .from("documentos_entrantes")
-          .update({ estado: "pendiente", revisado_en: null, revisado_por: null })
+          .update({
+            estado: "pendiente",
+            revisado_en: null,
+            revisado_por: null,
+            ...(lectura && { datos }),
+          })
           .eq("id", previo.id);
-        if (!errorRecuperar) {
-          revalidatePath(`/n/${org}/bandeja`);
-          return { estado: "pendiente", detalle: "Lo habías descartado: lo he vuelto a poner en la bandeja." };
-        }
+        if (errorRecuperar) return { estado: "repetido" };
+        recuperado = previo.estado === "descartado";
+      } else {
+        return { estado: "repetido" };
       }
-      return { estado: "repetido" };
+    } else if (error.code === "42501") {
+      return { error: "No tienes permiso para subir documentos." };
+    } else {
+      return { error: "No se pudo guardar el documento. Inténtalo de nuevo." };
     }
-    if (error.code === "42501") return { error: "No tienes permiso para subir documentos." };
-    return { error: "No se pudo guardar el documento. Inténtalo de nuevo." };
   }
 
   revalidatePath(`/n/${org}/bandeja`);
@@ -138,7 +151,10 @@ export async function registrarDocumento(entrada: {
     }
   }
 
-  return { estado: "pendiente" };
+  return {
+    estado: "pendiente",
+    ...(recuperado && { detalle: "Lo habías descartado: lo he vuelto a poner en la bandeja." }),
+  };
 }
 
 // Mete el ticket revisado como cierre del día.
