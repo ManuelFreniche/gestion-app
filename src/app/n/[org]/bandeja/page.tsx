@@ -5,6 +5,8 @@ import type { FacturaDatos } from "@/lib/factura";
 import { hayIA } from "@/lib/leer-documento-ia";
 import { exigirPermiso } from "@/lib/negocio";
 import { crearClienteServidor } from "@/lib/supabase/server";
+import { configCorreo } from "@/lib/correo";
+import { RevisarCorreo } from "./revisar-correo";
 import { SubirTickets } from "./subir";
 import { TarjetaDocumento, type DocumentoPendiente } from "./tarjeta";
 
@@ -93,6 +95,12 @@ export default async function PaginaBandeja({ params }: PageProps<"/n/[org]/band
       <Tarjeta>
         <SubirTickets org={org} hoy={hoyEn(zona)} lectorDirecto={Boolean(process.env.GEMINI_API_KEY)} />
       </Tarjeta>
+
+      {configCorreo()?.organizacion === org && (
+        <Tarjeta>
+          <RevisarCorreo org={org} />
+        </Tarjeta>
+      )}
 
       {documentos.length > 0 && <h2 className="text-2xl font-bold">Por revisar ({documentos.length})</h2>}
 

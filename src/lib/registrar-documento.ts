@@ -44,6 +44,8 @@ export async function registrarDocumento(entrada: {
   imagenes?: string[];
   // El navegador ya ha probado el OCR local: no volver a pedirlo.
   ocrHecho?: boolean;
+  // De dónde viene el documento (por defecto, subido a mano).
+  origen?: "subida" | "correo";
 }): Promise<ResultadoSubida> {
   const { org, ruta, nombre, tipoArchivo } = entrada;
   if (!UUID.test(org) || !ruta.startsWith(`${org}/`)) {
@@ -157,7 +159,7 @@ export async function registrarDocumento(entrada: {
   const { error } = await supabase.from("documentos_entrantes").insert({
     organizacion_id: org,
     tipo,
-    origen: "subida",
+    origen: entrada.origen ?? "subida",
     archivo_ruta: ruta,
     archivo_nombre: nombre.slice(0, 200),
     archivo_tipo: tipoArchivo,
