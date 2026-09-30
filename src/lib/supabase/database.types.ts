@@ -49,6 +49,97 @@ export type Database = {
           },
         ]
       }
+      cierre_tandas: {
+        Row: {
+          cierre_id: string
+          organizacion_id: string
+          sabor_id: string
+        }
+        Insert: {
+          cierre_id: string
+          organizacion_id: string
+          sabor_id: string
+        }
+        Update: {
+          cierre_id?: string
+          organizacion_id?: string
+          sabor_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cierre_tandas_cierre_id_organizacion_id_fkey"
+            columns: ["cierre_id", "organizacion_id"]
+            isOneToOne: false
+            referencedRelation: "cierres_diarios"
+            referencedColumns: ["id", "organizacion_id"]
+          },
+          {
+            foreignKeyName: "cierre_tandas_organizacion_id_fkey"
+            columns: ["organizacion_id"]
+            isOneToOne: false
+            referencedRelation: "organizaciones"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cierre_tandas_sabor_id_organizacion_id_fkey"
+            columns: ["sabor_id", "organizacion_id"]
+            isOneToOne: false
+            referencedRelation: "sabores"
+            referencedColumns: ["id", "organizacion_id"]
+          },
+        ]
+      }
+      cierres_diarios: {
+        Row: {
+          actualizado_en: string
+          creado_en: string
+          creado_por: string | null
+          fecha: string
+          id: string
+          local_id: string
+          notas: string | null
+          organizacion_id: string
+          venta: number
+        }
+        Insert: {
+          actualizado_en?: string
+          creado_en?: string
+          creado_por?: string | null
+          fecha: string
+          id?: string
+          local_id: string
+          notas?: string | null
+          organizacion_id: string
+          venta: number
+        }
+        Update: {
+          actualizado_en?: string
+          creado_en?: string
+          creado_por?: string | null
+          fecha?: string
+          id?: string
+          local_id?: string
+          notas?: string | null
+          organizacion_id?: string
+          venta?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cierres_diarios_local_id_organizacion_id_fkey"
+            columns: ["local_id", "organizacion_id"]
+            isOneToOne: false
+            referencedRelation: "locales"
+            referencedColumns: ["id", "organizacion_id"]
+          },
+          {
+            foreignKeyName: "cierres_diarios_organizacion_id_fkey"
+            columns: ["organizacion_id"]
+            isOneToOne: false
+            referencedRelation: "organizaciones"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       locales: {
         Row: {
           creado_en: string
@@ -161,6 +252,38 @@ export type Database = {
         }
         Relationships: []
       }
+      sabores: {
+        Row: {
+          activo: boolean
+          creado_en: string
+          id: string
+          nombre: string
+          organizacion_id: string
+        }
+        Insert: {
+          activo?: boolean
+          creado_en?: string
+          id?: string
+          nombre: string
+          organizacion_id: string
+        }
+        Update: {
+          activo?: boolean
+          creado_en?: string
+          id?: string
+          nombre?: string
+          organizacion_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sabores_organizacion_id_fkey"
+            columns: ["organizacion_id"]
+            isOneToOne: false
+            referencedRelation: "organizaciones"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -168,6 +291,17 @@ export type Database = {
     Functions: {
       crear_organizacion: {
         Args: { p_local?: string; p_nombre: string }
+        Returns: string
+      }
+      guardar_cierre: {
+        Args: {
+          p_fecha: string
+          p_local: string
+          p_notas?: string
+          p_organizacion: string
+          p_sabores?: string[]
+          p_venta: number
+        }
         Returns: string
       }
       mis_permisos: { Args: { p_organizacion: string }; Returns: string[] }
