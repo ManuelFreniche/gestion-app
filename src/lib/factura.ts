@@ -188,3 +188,27 @@ export function facturaFiable(f: FacturaDatos, hoy: string): boolean {
   if (Math.abs(suma - f.importe) <= margen) return true;
   return f.base === undefined && suma <= f.importe + margen;
 }
+
+// Sin IA, un PDF con varias facturas se separa por páginas: cada página con total y número o fecha
+// propios es una factura. Las páginas de continuación (sin total) se ignoran.
+export function leerFacturasPorPaginas(paginas: string[]): FacturaDatos[] {
+  const salida: FacturaDatos[] = [];
+  const vistas = new Set<string>();
+  let anterior: FacturaDatos | undefined;
+  for (const pagina of paginas) {
+    if (pagina.replace(/\s/g, "").length < 30) continue;
+    const leida = leerFactura(pagina);
+    if (!leida || leida.importe === null || !(leida.numero || leida.fecha)) continue;
+    const f = facturaDesdeReglas(leida);
+    if (!f.proveedor && anterior?.proveedor) {
+      f.proveedor = anterior.proveedor;
+      f.categoria = anterior.categoria;
+    }
+    const clave = `${f.proveedor}|${f.numero}|${f.importe}`;
+    if (vistas.has(clave)) continue;
+    vistas.add(clave);
+    salida.push(f);
+    anterior = f;
+  }
+  return salida;
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detectarFecha, detectarTotal, leerFactura, limpiarImporte } from "../factura";
+import { detectarFecha, detectarTotal, leerFactura, leerFacturasPorPaginas, limpiarImporte } from "../factura";
 
 describe("limpiarImporte", () => {
   it("entiende los formatos habituales", () => {
@@ -63,5 +63,22 @@ describe("detectarFecha", () => {
 describe("detectarTotal", () => {
   it("usa el mayor importe con € como último recurso", () => {
     expect(detectarTotal("Línea 10,00 €\nLínea 25,50 €")).toBe(25.5);
+  });
+});
+
+describe("leerFacturasPorPaginas", () => {
+  const pagina = (numero: string, total: string) =>
+    `PANADERÍA DEL ROSAL\nFECHA: 20/08/2026 NÚMERO:A ${numero}\nCHAPATA GOLDEN 13,99\nBASE IMPONIBLE 13,99\nTOTAL 14,55 €${total}`;
+
+  it("separa una factura por página y las suma aparte", () => {
+    const f = leerFacturasPorPaginas([pagina("1329754", ""), pagina("1329801", "")].map((p, i) => (i ? p.replace("14,55", "20,10") : p)));
+    expect(f).toHaveLength(2);
+    expect(f.map((x) => x.importe)).toEqual([14.55, 20.1]);
+    expect(f[0].proveedor).toBe("Panadería del Rosal");
+  });
+
+  it("ignora páginas de continuación y repetidas", () => {
+    const f = leerFacturasPorPaginas([pagina("1329754", ""), "Condiciones generales de venta y protección de datos personales del proveedor.", pagina("1329754", "")]);
+    expect(f).toHaveLength(1);
   });
 });

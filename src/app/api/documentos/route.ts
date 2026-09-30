@@ -15,6 +15,7 @@ export async function POST(peticion: Request): Promise<NextResponse<ResultadoSub
   }
   const texto = (v: unknown) => (typeof v === "string" ? v : undefined);
   const imagenes = Array.isArray(cuerpo.imagenes) ? cuerpo.imagenes.filter((i): i is string => typeof i === "string") : [];
+  const paginas = Array.isArray(cuerpo.paginas) ? cuerpo.paginas.filter((p): p is string => typeof p === "string").slice(0, 60) : [];
   const resultado = await registrarDocumento({
     org: texto(cuerpo.org) ?? "",
     ruta: texto(cuerpo.ruta) ?? "",
@@ -23,6 +24,7 @@ export async function POST(peticion: Request): Promise<NextResponse<ResultadoSub
     fecha: texto(cuerpo.fecha),
     texto: texto(cuerpo.texto),
     imagenes,
+    paginas,
     ocrHecho: cuerpo.ocrHecho === true,
   });
   return NextResponse.json(resultado);

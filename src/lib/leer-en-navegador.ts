@@ -95,7 +95,7 @@ const PAGINAS_IMAGEN = 4;
 const LADO_IA = 1600;
 const MAX_BASE64_TOTAL = 3_300_000; // la petición a Vercel admite 4,5 MB
 
-export type DocumentoPreparado = { texto: string; imagenes: string[] };
+export type DocumentoPreparado = { texto: string; imagenes: string[]; paginas?: string[] };
 
 function jpegBase64(lienzo: HTMLCanvasElement, calidad = 0.72): string {
   return lienzo.toDataURL("image/jpeg", calidad).split(",")[1] ?? "";
@@ -126,7 +126,7 @@ export async function prepararDocumento(archivo: File): Promise<DocumentoPrepara
     textos.push(contenido.items.map((i) => ("str" in i ? i.str : "")).join("\n"));
   }
   const texto = textos.join("\n\n");
-  if (texto.replace(/\s/g, "").length >= MIN_TEXTO_IA) return { texto, imagenes: [] };
+  if (texto.replace(/\s/g, "").length >= MIN_TEXTO_IA) return { texto, imagenes: [], paginas: textos };
 
   const imagenes: string[] = [];
   let total = 0;

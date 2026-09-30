@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { extractText, getDocumentProxy } from "unpdf";
 import { esFecha, euros, fechaLarga, hoyEn } from "./cierre";
-import { facturaDesdeReglas, facturaFiable, leerFactura, type FacturaDatos } from "./factura";
+import { facturaDesdeReglas, facturaFiable, leerFactura, leerFacturasPorPaginas, type FacturaDatos } from "./factura";
 import { hayIA, leerDocumentoConIA } from "./leer-documento-ia";
 import { crearClienteServidor } from "./supabase/server";
 import { leerTicketCierre, type TicketCierre } from "./ticket-cierre";
@@ -38,6 +38,8 @@ export async function registrarDocumento(entrada: {
   fecha?: string;
   // Texto que el navegador ya ha leído del documento (PDF u OCR).
   texto?: string;
+  // Texto de cada página del PDF, para separar las facturas cuando no hay IA.
+  paginas?: string[];
   // Páginas como JPEG en base64, cuando el documento es una foto o un PDF escaneado.
   imagenes?: string[];
   // El navegador ya ha probado el OCR local: no volver a pedirlo.
@@ -62,9 +64,12 @@ export async function registrarDocumento(entrada: {
     .eq("organizacion_id", org)
     .eq("huella", huella)
     .maybeSingle();
+  const ia = hayIA();
   if (anterior) {
-    const d = (anterior.datos ?? {}) as { venta?: unknown; facturas?: unknown[] };
-    const leido = d.venta !== undefined || (Array.isArray(d.facturas) && d.facturas.length > 0);
+    const d = (anterior.datos ?? {}) as { venta?: unknown; facturas?: unknown[]; lector?: unknown };
+    // Una lectura hecha con reglas (sin IA) se repite si ahora hay IA: suele ser incompleta.
+    const leido =
+      d.venta !== undefined || (Array.isArray(d.facturas) && d.facturas.length > 0 && (d.lector === "ia" || !ia));
     if (anterior.estado === "aprobado" || (anterior.estado === "pendiente" && leido)) {
       await supabase.storage.from("documentos").remove([ruta]);
       return { estado: "repetido" };
@@ -86,15 +91,22 @@ export async function registrarDocumento(entrada: {
 
   let facturas: FacturaDatos[] = [];
   let motivoFallo: string | undefined;
-  const ia = hayIA();
+  let lector: "ia" | "reglas" = "reglas";
   if (!lectura && ia && (textoLeido.trim().length >= 30 || imagenes.length > 0)) {
     const respuesta = await leerDocumentoConIA({ texto: textoLeido, imagenes });
     motivoFallo = respuesta.motivo;
     if (respuesta.documento?.ticket) lectura = respuesta.documento.ticket;
-    else facturas = respuesta.documento?.facturas ?? [];
-  } else if (!lectura && textoLeido.trim()) {
-    const reglas = leerFactura(textoLeido);
-    if (reglas) facturas = [facturaDesdeReglas(reglas)];
+    else {
+      facturas = respuesta.documento?.facturas ?? [];
+      lector = "ia";
+    }
+  }
+  // Sin IA (o si no ha sacado nada): reglas de texto, separando las facturas por páginas.
+  if (!lectura && facturas.length === 0 && textoLeido.trim()) {
+    const porPaginas = leerFacturasPorPaginas(entrada.paginas ?? []);
+    const reglas = porPaginas.length === 0 ? leerFactura(textoLeido) : null;
+    if (porPaginas.length > 0) facturas = porPaginas;
+    else if (reglas) facturas = [facturaDesdeReglas(reglas)];
   }
 
   // Sin IA y sin texto (foto o PDF escaneado): el navegador debe hacer antes el OCR local.
@@ -104,15 +116,24 @@ export async function registrarDocumento(entrada: {
   }
 
   const tipo = lectura ? "cierre" : facturas.length > 0 || textoLeido.trim() || imagenes.length > 0 ? "factura" : "cierre";
+  const sinIA = !ia && "El lector de IA no está activado (falta ANTHROPIC_API_KEY en Vercel): así solo leo bien PDFs con texto claro.";
   const aviso = lectura
     ? undefined
     : tipo === "factura"
-      ? facturas.length > 0
-        ? "Parece una factura, pero revisa estos datos antes de meterla."
-        : "No he reconocido los datos de la factura: escríbelos mirando el documento."
+      ? [
+          facturas.length > 0
+            ? "Parece una factura, pero revisa estos datos antes de meterla."
+            : "No he reconocido los datos de la factura: escríbelos mirando el documento.",
+          sinIA,
+          motivoFallo,
+        ]
+          .filter(Boolean)
+          .join(" ")
       : [
           "No se pudo leer solo: no reconozco el formato del ticket.",
           !textoLeido.trim() && "No se encontró texto en el documento.",
+          sinIA,
+          motivoFallo,
         ]
           .filter(Boolean)
           .join(" ");
@@ -125,6 +146,7 @@ export async function registrarDocumento(entrada: {
     if (lectura.fecha) datos.fecha = lectura.fecha;
   } else if (tipo === "factura" && facturas.length > 0) {
     datos.facturas = facturas;
+    datos.lector = lector;
   } else if (textoLeido.trim()) {
     // Para poder ver qué texto se leyó cuando el formato no se reconoce.
     datos.texto_leido = textoLeido.replace(/\s+/g, " ").trim().slice(0, 1500);

@@ -51,7 +51,7 @@ export function SubirTickets({ org, hoy }: { org: string; hoy: string }) {
       const subida = await supabase.storage.from("documentos").upload(ruta, archivo, { contentType: archivo.type });
       if (subida.error) return { nombre: archivo.name, tono: "error", texto: "No se pudo subir. Inténtalo de nuevo." };
 
-      const enviar = (extra: { texto: string; imagenes: string[]; ocrHecho?: boolean }): Promise<ResultadoSubida> =>
+      const enviar = (extra: { texto: string; imagenes: string[]; paginas?: string[]; ocrHecho?: boolean }): Promise<ResultadoSubida> =>
         fetch("/api/documentos", {
           method: "POST",
           headers: { "content-type": "application/json" },
