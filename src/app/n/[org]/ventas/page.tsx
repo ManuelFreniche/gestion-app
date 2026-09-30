@@ -4,7 +4,9 @@ import { Tarjeta } from "@/components/ui";
 import { esFecha, euros, fechaLarga, hoyEn, sumarDias } from "@/lib/cierre";
 import { exigirPermiso } from "@/lib/negocio";
 import { crearClienteServidor } from "@/lib/supabase/server";
+import { desconectarTelegram } from "./acciones-telegram";
 import { FormularioCierre, FormularioSabores } from "./formularios";
+import { BotonTelegram } from "./telegram";
 
 // Cierre del día: la venta y los sabores de los que se ha acabado una tanda.
 // Pensado para hacerse en menos de 30 segundos desde el móvil, con una mano.
@@ -21,7 +23,8 @@ export default async function PaginaVentas({
   const puedeGestionarSabores = negocio.permisos.has("inventario.editar");
   const supabase = await crearClienteServidor();
 
-  const [ajustes, locales, sabores, recientes] = await Promise.all([
+  const puedeAjustes = negocio.permisos.has("ajustes.editar");
+  const [ajustes, locales, sabores, recientes, conexiones] = await Promise.all([
     supabase.from("ajustes_organizacion").select("zona_horaria").eq("organizacion_id", org).maybeSingle(),
     supabase.from("locales").select("id, nombre").eq("organizacion_id", org).order("creado_en"),
     supabase
@@ -36,6 +39,9 @@ export default async function PaginaVentas({
       .eq("organizacion_id", org)
       .order("fecha", { ascending: false })
       .limit(30),
+    puedeAjustes
+      ? supabase.from("telegram_vinculos").select("id, nombre, local_id").eq("organizacion_id", org)
+      : { data: [] },
   ]);
 
   const hoy = hoyEn(ajustes.data?.zona_horaria ?? "Europe/Madrid");
@@ -61,6 +67,10 @@ export default async function PaginaVentas({
     `/n/${org}/ventas?fecha=${dia}&local=${localId}`;
   const ultimos = (recientes.data ?? []).filter((c) => c.local_id === local.id).slice(0, 7);
   const listaSabores = sabores.data ?? [];
+  const conexion = (conexiones.data ?? []).find((c) => c.local_id === local.id);
+  const faltanTelegram = ["TELEGRAM_BOT_TOKEN", "SUPABASE_SERVICE_ROLE_KEY", "CRON_SECRET"].filter(
+    (n) => !process.env[n]?.trim(),
+  );
 
   return (
     <div className="mx-auto flex w-full max-w-xl flex-col gap-6">
@@ -143,6 +153,39 @@ export default async function PaginaVentas({
             ))}
           </Tarjeta>
         </section>
+      )}
+
+      {puedeAjustes && (
+        <Tarjeta className="flex flex-col gap-3">
+          <h2 className="font-medium">Aviso por Telegram</h2>
+          {faltanTelegram.length > 0 ? (
+            <p className="text-sm text-texto-suave">
+              Sin conectar: faltan estas variables en Vercel: {faltanTelegram.join(", ")}.
+            </p>
+          ) : conexion ? (
+            <>
+              <p className="text-base">
+                ✓ Conectado{conexion.nombre ? ` con ${conexion.nombre}` : ""}. Cada noche te pregunto el cierre;
+                también puedes escribir /cierre al bot cuando quieras.
+              </p>
+              <form action={desconectarTelegram}>
+                <input type="hidden" name="org" value={org} />
+                <input type="hidden" name="id" value={conexion.id} />
+                <button type="submit" className="text-sm text-peligro underline">
+                  Desconectar
+                </button>
+              </form>
+            </>
+          ) : (
+            <>
+              <p className="text-sm text-texto-suave">
+                Cada noche te escribo por Telegram: me dices la venta y tocas los sabores que se han acabado. Sin
+                tener que abrir la app.
+              </p>
+              <BotonTelegram org={org} local={local.id} />
+            </>
+          )}
+        </Tarjeta>
       )}
     </div>
   );

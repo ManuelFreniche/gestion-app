@@ -2,8 +2,9 @@ import { createServerClient } from "@supabase/ssr";
 import { COOKIE_SESION_TEMPORAL, opcionesSesion } from "@/lib/supabase/cookies";
 import { NextResponse, type NextRequest } from "next/server";
 
-// Rutas que se pueden abrir sin sesión.
-const RUTAS_PUBLICAS = ["/login", "/auth"];
+// Rutas que se pueden abrir sin sesión. Las de Telegram las llaman Telegram y el cron de Vercel, que
+// no tienen sesión: cada una comprueba su propio secreto.
+const RUTAS_PUBLICAS = ["/login", "/auth", "/api/telegram"];
 
 // Renueva la sesión de Supabase en cada petición y manda al login a quien no la tenga.
 // Es solo una comprobación rápida: los permisos reales los decide la base de datos (RLS).
