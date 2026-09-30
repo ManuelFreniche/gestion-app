@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { adjuntosAprovechables, configCorreo, faltanVariablesCorreo } from "../correo";
+import { adjuntosAprovechables, configCorreo, faltanVariablesCorreo, tramoValido } from "../correo";
 
 const adjunto = (filename: string, contentType: string, size: number, related = false) => ({
   filename,
@@ -66,5 +66,19 @@ describe("faltanVariablesCorreo", () => {
     process.env.CORREO_ORGANIZACION = "org-1";
     expect(faltanVariablesCorreo("org-1")).toEqual([]);
     process.env = antes;
+  });
+});
+
+describe("tramoValido", () => {
+  it("acepta fechas reales en orden y de hasta un año", () => {
+    expect(tramoValido("2026-08-01", "2026-08-31")).toEqual({ desde: "2026-08-01", hasta: "2026-08-31" });
+    expect(tramoValido("2026-08-05", "2026-08-05")).not.toBeNull();
+  });
+  it("rechaza fechas inventadas, al revés o de más de un año", () => {
+    expect(tramoValido("2026-02-31", "2026-03-05")).toBeNull();
+    expect(tramoValido("2026-08-31", "2026-08-01")).toBeNull();
+    expect(tramoValido("2024-01-01", "2026-01-01")).toBeNull();
+    expect(tramoValido("ayer", "hoy")).toBeNull();
+    expect(tramoValido(undefined, "2026-08-01")).toBeNull();
   });
 });

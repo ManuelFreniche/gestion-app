@@ -67,10 +67,30 @@ export type ResultadoCorreo = {
   quedan: number; // correos por mirar en la siguiente vuelta
 };
 
+export type Tramo = { desde: string; hasta: string }; // aaaa-mm-dd, ambos incluidos
+
+const FECHA = /^\d{4}-\d{2}-\d{2}$/;
+
+// Devuelve el tramo si es válido (fechas reales, en orden y de hasta un año), o null.
+export function tramoValido(desde: unknown, hasta: unknown): Tramo | null {
+  if (typeof desde !== "string" || typeof hasta !== "string" || !FECHA.test(desde) || !FECHA.test(hasta)) return null;
+  const d = new Date(`${desde}T00:00:00Z`);
+  const h = new Date(`${hasta}T00:00:00Z`);
+  if (Number.isNaN(d.getTime()) || Number.isNaN(h.getTime()) || d.toISOString().slice(0, 10) !== desde || h.toISOString().slice(0, 10) !== hasta) return null;
+  const dias = (h.getTime() - d.getTime()) / 86_400_000;
+  return dias >= 0 && dias <= 366 ? { desde, hasta } : null;
+}
+
+const sumarDias = (iso: string, dias: number) => new Date(new Date(`${iso}T00:00:00Z`).getTime() + dias * 86_400_000).toISOString().slice(0, 10);
+
+// Día del correo en hora de España, para comparar con el tramo elegido.
+const diaEnEspana = (fecha: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Madrid" }).format(fecha);
+
 export async function revisarCorreo(
   supabase: SupabaseClient,
   config: ConfigCorreo,
   presupuestoMs = 40_000,
+  tramo?: Tramo,
 ): Promise<ResultadoCorreo> {
   const resultado: ResultadoCorreo = { nuevos: 0, repetidos: 0, sinLeer: 0, quedan: 0 };
   const limite = Date.now() + presupuestoMs;
@@ -98,7 +118,12 @@ export async function revisarCorreo(
 
   const bloqueo = await cliente.getMailboxLock("INBOX");
   try {
-    const consulta = `has:attachment newer_than:${config.dias}d -label:${ETIQUETA_LEIDO}${config.etiqueta ? ` label:${config.etiqueta}` : ""}`;
+    // Gmail cuenta los días a su manera (zona horaria): se pide un día de margen a cada lado y luego
+    // se comprueba el día exacto de cada correo.
+    const fechas = tramo
+      ? `after:${sumarDias(tramo.desde, -1).replaceAll("-", "/")} before:${sumarDias(tramo.hasta, 2).replaceAll("-", "/")}`
+      : `newer_than:${config.dias}d`;
+    const consulta = `has:attachment ${fechas} -label:${ETIQUETA_LEIDO}${config.etiqueta ? ` label:${config.etiqueta}` : ""}`;
     const uids = ((await cliente.search({ gmailraw: consulta }, { uid: true })) || []).sort((a, b) => b - a);
     let hechos = 0;
     for (const uid of uids) {
@@ -107,6 +132,10 @@ export async function revisarCorreo(
       const mensaje = await cliente.fetchOne(String(uid), { source: true }, { uid: true });
       if (!mensaje || !mensaje.source) continue;
       const analizado = await simpleParser(mensaje.source);
+      if (tramo && analizado.date) {
+        const dia = diaEnEspana(analizado.date);
+        if (dia < tramo.desde || dia > tramo.hasta) continue; // fuera del tramo: ni se lee ni se marca
+      }
       let completo = true;
       for (const adjunto of adjuntosAprovechables(analizado.attachments)) {
         const ruta = `${config.organizacion}/${randomUUID()}.${EXTENSION[adjunto.tipo]}`;

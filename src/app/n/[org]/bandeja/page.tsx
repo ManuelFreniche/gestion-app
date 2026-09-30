@@ -98,7 +98,7 @@ export default async function PaginaBandeja({ params }: PageProps<"/n/[org]/band
 
       {faltanVariablesCorreo(org).length === 0 ? (
         <Tarjeta>
-          <RevisarCorreo org={org} />
+          <RevisarCorreo org={org} hoy={hoyEn(zona)} />
         </Tarjeta>
       ) : (
         negocio.rol === "dueno" && (
