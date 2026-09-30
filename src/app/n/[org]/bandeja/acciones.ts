@@ -12,7 +12,7 @@ export type EstadoBandeja = { error?: string; ok?: boolean };
 // Resultado de subir un documento: si se leyó bien, el cierre se mete solo.
 export type ResultadoSubida = {
   error?: string;
-  estado?: "metido" | "pendiente";
+  estado?: "metido" | "pendiente" | "repetido";
   detalle?: string;
 };
 
@@ -76,7 +76,11 @@ export async function registrarDocumento(entrada: {
   });
 
   if (error) {
-    if (error.code === "23505") return { error: `«${nombre}» ya estaba en la bandeja.` };
+    if (error.code === "23505") {
+      // Ya lo tenías (pendiente, metido o descartado): se ignora sin molestar y se borra la copia.
+      await supabase.storage.from("documentos").remove([ruta]);
+      return { estado: "repetido" };
+    }
     if (error.code === "42501") return { error: "No tienes permiso para subir documentos." };
     return { error: "No se pudo guardar el documento. Inténtalo de nuevo." };
   }

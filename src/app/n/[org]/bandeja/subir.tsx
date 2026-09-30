@@ -13,7 +13,7 @@ const EXTENSION: Record<string, string> = {
   "image/heic": "heic",
 };
 
-type Resultado = { nombre: string; tono: "bien" | "revisar" | "error"; texto: string };
+type Resultado = { nombre: string; tono: "bien" | "revisar" | "error" | "repetido"; texto: string };
 
 // Sube los tickets directamente a Storage (así no importa que la foto pese). Se pueden
 // arrastrar varios a la vez. Si el ticket se lee bien, el cierre se mete solo; si no,
@@ -52,6 +52,8 @@ export function SubirTickets({ org, hoy }: { org: string; hoy: string }) {
             fecha: archivos.length === 1 ? fecha : undefined,
           });
           if (resultado.error) nuevos.push({ nombre: archivo.name, tono: "error", texto: resultado.error });
+          else if (resultado.estado === "repetido")
+            nuevos.push({ nombre: archivo.name, tono: "repetido", texto: "Ya lo tenías: lo he ignorado." });
           else if (resultado.estado === "metido")
             nuevos.push({ nombre: archivo.name, tono: "bien", texto: `Metido en el cierre · ${resultado.detalle}` });
           else nuevos.push({ nombre: archivo.name, tono: "revisar", texto: "Falta revisarlo: míralo abajo." });
@@ -119,7 +121,7 @@ export function SubirTickets({ org, hoy }: { org: string; hoy: string }) {
               className={`rounded-lg px-3 py-2 text-sm ${
                 r.tono === "bien"
                   ? "bg-primario/10"
-                  : r.tono === "revisar"
+                  : r.tono === "revisar" || r.tono === "repetido"
                     ? "bg-superficie ring-1 ring-borde"
                     : "bg-peligro/10 text-peligro"
               }`}

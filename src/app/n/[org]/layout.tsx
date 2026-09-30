@@ -1,12 +1,17 @@
 import Link from "next/link";
 import { cargarNegocio } from "@/lib/negocio";
 import { modulosVisibles, NOMBRE_ROL } from "@/lib/permisos";
+import { crearClienteServidor } from "@/lib/supabase/server";
+import { MenuNegocios } from "@/app/negocios/menu";
 
 // Marco común de un negocio: cabecera y navegación con solo los módulos que el rol permite.
 // En el móvil la navegación va abajo, al alcance del pulgar.
 export default async function LayoutNegocio({ children, params }: LayoutProps<"/n/[org]">) {
   const { org } = await params;
   const negocio = await cargarNegocio(org);
+  const supabase = await crearClienteServidor();
+  const { data: filas } = await supabase.from("organizaciones").select("id, nombre").order("nombre");
+  const negocios = filas ?? [];
   const modulos = modulosVisibles(negocio.permisos, negocio.modulosActivos);
   const enlaces = [
     { href: `/n/${org}`, nombre: "Inicio" },
@@ -17,7 +22,8 @@ export default async function LayoutNegocio({ children, params }: LayoutProps<"/
   return (
     <div className="flex flex-1 flex-col md:flex-row">
       <aside className="hidden w-56 shrink-0 flex-col gap-1 border-r border-borde bg-superficie p-4 md:flex">
-        <Link href="/negocios" className="mb-1 truncate font-semibold">
+        <MenuNegocios actual={org} negocios={negocios} prefijo="escritorio-" />
+        <Link href={`/n/${org}`} className="mt-3 truncate font-semibold">
           {negocio.nombre}
         </Link>
         <p className="mb-4 text-xs text-texto-suave">{NOMBRE_ROL[negocio.rol]}</p>
@@ -29,10 +35,10 @@ export default async function LayoutNegocio({ children, params }: LayoutProps<"/
       </aside>
 
       <header className="flex items-center justify-between border-b border-borde bg-superficie px-4 py-3 md:hidden">
-        <Link href="/negocios" className="truncate font-semibold">
+        <Link href={`/n/${org}`} className="min-w-0 truncate font-semibold">
           {negocio.nombre}
         </Link>
-        <span className="text-xs text-texto-suave">{NOMBRE_ROL[negocio.rol]}</span>
+        <MenuNegocios actual={org} negocios={negocios} prefijo="movil-" />
       </header>
 
       <main className="flex-1 p-4 pb-24 md:p-8">{children}</main>
