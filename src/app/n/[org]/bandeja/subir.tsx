@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Aviso, Boton } from "@/components/ui";
+import { Boton, Campo, Etiqueta } from "@/components/ui";
 import { crearClienteNavegador } from "@/lib/supabase/cliente";
 import { registrarDocumento } from "./acciones";
 
@@ -13,49 +13,60 @@ const EXTENSION: Record<string, string> = {
   "image/heic": "heic",
 };
 
-// Sube el ticket directamente a Storage (así no importa que la foto pese) y lo deja en la bandeja.
-export function SubirTicket({ org }: { org: string }) {
+type Resultado = { nombre: string; tono: "bien" | "revisar" | "error"; texto: string };
+
+// Sube los tickets directamente a Storage (así no importa que la foto pese). Se pueden
+// arrastrar varios a la vez. Si el ticket se lee bien, el cierre se mete solo; si no,
+// queda en la lista de abajo para revisarlo.
+export function SubirTickets({ org, hoy }: { org: string; hoy: string }) {
   const entrada = useRef<HTMLInputElement>(null);
-  const [subiendo, setSubiendo] = useState(false);
-  const [mensaje, setMensaje] = useState<{ error?: string; ok?: string }>({});
+  const [arrastrando, setArrastrando] = useState(false);
+  const [progreso, setProgreso] = useState<{ hecho: number; total: number } | null>(null);
+  const [fecha, setFecha] = useState(hoy);
+  const [resultados, setResultados] = useState<Resultado[]>([]);
+  const subiendo = progreso !== null;
 
-  async function subir(archivos: FileList | null) {
-    if (!archivos || archivos.length === 0) return;
-    setSubiendo(true);
-    setMensaje({});
+  async function subir(archivos: File[]) {
+    if (archivos.length === 0 || subiendo) return;
+    setResultados([]);
+    setProgreso({ hecho: 0, total: archivos.length });
     const supabase = crearClienteNavegador();
-    let bien = 0;
-    let error: string | undefined;
+    const nuevos: Resultado[] = [];
 
-    for (const archivo of Array.from(archivos)) {
+    for (const [indice, archivo] of archivos.entries()) {
       const extension = EXTENSION[archivo.type];
       if (!extension) {
-        error = "Solo se pueden subir PDF o fotos (JPG, PNG).";
-        continue;
+        nuevos.push({ nombre: archivo.name, tono: "error", texto: "Solo se pueden subir PDF o fotos (JPG, PNG)." });
+      } else {
+        const ruta = `${org}/${crypto.randomUUID()}.${extension}`;
+        const subida = await supabase.storage.from("documentos").upload(ruta, archivo, { contentType: archivo.type });
+        if (subida.error) {
+          nuevos.push({ nombre: archivo.name, tono: "error", texto: "No se pudo subir. Inténtalo de nuevo." });
+        } else {
+          const resultado = await registrarDocumento({
+            org,
+            ruta,
+            nombre: archivo.name,
+            tipoArchivo: archivo.type,
+            // Con varios archivos no se puede saber a qué día corresponde cada uno.
+            fecha: archivos.length === 1 ? fecha : undefined,
+          });
+          if (resultado.error) nuevos.push({ nombre: archivo.name, tono: "error", texto: resultado.error });
+          else if (resultado.estado === "metido")
+            nuevos.push({ nombre: archivo.name, tono: "bien", texto: `Metido en el cierre · ${resultado.detalle}` });
+          else nuevos.push({ nombre: archivo.name, tono: "revisar", texto: "Falta revisarlo: míralo abajo." });
+        }
       }
-      const ruta = `${org}/${crypto.randomUUID()}.${extension}`;
-      const subida = await supabase.storage.from("documentos").upload(ruta, archivo, { contentType: archivo.type });
-      if (subida.error) {
-        error = "No se pudo subir el archivo. Inténtalo de nuevo.";
-        continue;
-      }
-      const resultado = await registrarDocumento({
-        org,
-        ruta,
-        nombre: archivo.name,
-        tipoArchivo: archivo.type,
-      });
-      if (resultado.error) error = resultado.error;
-      else bien += 1;
+      setProgreso({ hecho: indice + 1, total: archivos.length });
     }
 
-    setSubiendo(false);
-    setMensaje({ error, ok: bien > 0 ? `${bien} subido${bien > 1 ? "s" : ""}. Ya está en la lista de abajo.` : undefined });
+    setResultados(nuevos);
+    setProgreso(null);
     if (entrada.current) entrada.current.value = "";
   }
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-4">
       <input
         ref={entrada}
         type="file"
@@ -63,17 +74,62 @@ export function SubirTicket({ org }: { org: string }) {
         multiple
         className="sr-only"
         id="subir-ticket"
-        onChange={(e) => subir(e.target.files)}
+        onChange={(e) => subir(Array.from(e.target.files ?? []))}
       />
-      <Boton type="button" className="h-14 text-base" disabled={subiendo} onClick={() => entrada.current?.click()}>
-        {subiendo ? "Subiendo…" : "Subir ticket de cierre"}
-      </Boton>
-      <p className="text-sm text-texto-suave">PDF o foto. Puedes elegir varios a la vez.</p>
-      <Aviso>{mensaje.error}</Aviso>
-      {mensaje.ok && (
-        <p role="status" className="rounded-lg bg-primario/10 px-3 py-2 text-sm">
-          {mensaje.ok}
+      <div
+        onDragOver={(e) => {
+          e.preventDefault();
+          setArrastrando(true);
+        }}
+        onDragLeave={() => setArrastrando(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setArrastrando(false);
+          subir(Array.from(e.dataTransfer.files));
+        }}
+        className={`flex flex-col items-center gap-3 rounded-xl border-2 border-dashed px-4 py-8 text-center transition ${
+          arrastrando ? "border-primario bg-primario/10" : "border-borde"
+        }`}
+      >
+        <p className="font-medium">
+          {subiendo
+            ? `Subiendo ${progreso.hecho} de ${progreso.total}…`
+            : arrastrando
+              ? "Suéltalos aquí"
+              : "Arrastra aquí los tickets"}
         </p>
+        <p className="text-sm text-texto-suave">PDF o foto. Puedes soltar varios a la vez.</p>
+        <Boton type="button" disabled={subiendo} onClick={() => entrada.current?.click()} className="h-14 text-base">
+          Elegir archivos
+        </Boton>
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <Etiqueta htmlFor="fecha-subida" className="text-sm">
+          Si subes un solo ticket y no trae fecha, se guarda con este día
+        </Etiqueta>
+        <Campo id="fecha-subida" type="date" value={fecha} max={hoy} onChange={(e) => setFecha(e.target.value || hoy)} />
+      </div>
+
+      {resultados.length > 0 && (
+        <ul role="status" className="flex flex-col gap-2">
+          {resultados.map((r, i) => (
+            <li
+              key={`${r.nombre}-${i}`}
+              className={`rounded-lg px-3 py-2 text-sm ${
+                r.tono === "bien"
+                  ? "bg-primario/10"
+                  : r.tono === "revisar"
+                    ? "bg-superficie ring-1 ring-borde"
+                    : "bg-peligro/10 text-peligro"
+              }`}
+            >
+              <span className="font-medium">{r.nombre}</span>
+              <br />
+              {r.texto}
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );

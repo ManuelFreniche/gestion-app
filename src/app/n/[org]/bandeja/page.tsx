@@ -3,7 +3,7 @@ import { Tarjeta } from "@/components/ui";
 import { hoyEn } from "@/lib/cierre";
 import { exigirPermiso } from "@/lib/negocio";
 import { crearClienteServidor } from "@/lib/supabase/server";
-import { SubirTicket } from "./subir";
+import { SubirTickets } from "./subir";
 import { TarjetaDocumento, type DocumentoPendiente } from "./tarjeta";
 
 // Bandeja de revisión: cada documento se ve abierto en la pantalla y una persona decide
@@ -68,11 +68,13 @@ export default async function PaginaBandeja({ params }: PageProps<"/n/[org]/band
     <div className="mx-auto flex w-full max-w-xl flex-col gap-6">
       <div className="flex flex-col gap-1">
         <h1 className="text-2xl font-semibold">Bandeja</h1>
-        <p className="text-texto-suave">Mira cada documento y decide si se mete o no.</p>
+        <p className="text-texto-suave">
+          Los tickets que se leen bien se meten solos. Lo que no, aparece aquí para que lo mires.
+        </p>
       </div>
 
       <Tarjeta>
-        <SubirTicket org={org} />
+        <SubirTickets org={org} hoy={hoyEn(zona)} />
       </Tarjeta>
 
       {documentos.length === 0 ? (

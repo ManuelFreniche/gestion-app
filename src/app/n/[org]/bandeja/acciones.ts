@@ -3,11 +3,18 @@
 import { createHash } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { extractText, getDocumentProxy } from "unpdf";
-import { esFecha, leerImporte } from "@/lib/cierre";
+import { esFecha, euros, fechaLarga, hoyEn, leerImporte } from "@/lib/cierre";
 import { crearClienteServidor } from "@/lib/supabase/server";
 import { leerTicketCierre } from "@/lib/ticket-cierre";
 
 export type EstadoBandeja = { error?: string; ok?: boolean };
+
+// Resultado de subir un documento: si se leyó bien, el cierre se mete solo.
+export type ResultadoSubida = {
+  error?: string;
+  estado?: "metido" | "pendiente";
+  detalle?: string;
+};
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -18,14 +25,17 @@ async function textoDelPdf(bytes: Uint8Array): Promise<string> {
 }
 
 // El archivo ya está en Storage (lo sube el navegador). Aquí se lee, se calcula su huella
-// para no meter dos veces lo mismo, se intenta sacar la venta del ticket y se deja
-// en la bandeja pendiente de revisión.
+// para no meter dos veces lo mismo y se intenta sacar la venta del ticket.
+// Si se leyó la venta y se sabe el día y el local, el cierre se mete solo; si no, el
+// documento queda en la bandeja para que una persona lo revise.
 export async function registrarDocumento(entrada: {
   org: string;
   ruta: string;
   nombre: string;
   tipoArchivo: string;
-}): Promise<EstadoBandeja> {
+  // Día a usar si el ticket no trae fecha. Solo se envía cuando se sube un único archivo.
+  fecha?: string;
+}): Promise<ResultadoSubida> {
   const { org, ruta, nombre, tipoArchivo } = entrada;
   if (!UUID.test(org) || !ruta.startsWith(`${org}/`)) {
     return { error: "Algo ha ido mal. Recarga la página e inténtalo de nuevo." };
@@ -53,6 +63,7 @@ export async function registrarDocumento(entrada: {
     }
   }
 
+  // Sin .select(): quien sube pero no revisa (p. ej. un empleado) no puede leer la fila.
   const { error } = await supabase.from("documentos_entrantes").insert({
     organizacion_id: org,
     tipo: "cierre",
@@ -65,13 +76,48 @@ export async function registrarDocumento(entrada: {
   });
 
   if (error) {
-    if (error.code === "23505") return { error: "Este ticket ya estaba en la bandeja." };
+    if (error.code === "23505") return { error: `«${nombre}» ya estaba en la bandeja.` };
     if (error.code === "42501") return { error: "No tienes permiso para subir documentos." };
     return { error: "No se pudo guardar el documento. Inténtalo de nuevo." };
   }
 
   revalidatePath(`/n/${org}/bandeja`);
-  return { ok: true };
+
+  // Aprobación automática: solo con la venta leída, el día conocido y un único local.
+  const fecha = typeof datos.fecha === "string" ? datos.fecha : entrada.fecha;
+  const venta = typeof datos.venta === "number" ? datos.venta : undefined;
+  if (venta !== undefined && esFecha(fecha)) {
+    const { data: fila } = await supabase
+      .from("documentos_entrantes")
+      .select("id")
+      .eq("organizacion_id", org)
+      .eq("huella", huella)
+      .maybeSingle();
+    if (!fila) return { estado: "pendiente" };
+
+    const [locales, ajustes] = await Promise.all([
+      supabase.from("locales").select("id").eq("organizacion_id", org),
+      supabase.from("ajustes_organizacion").select("zona_horaria").eq("organizacion_id", org).maybeSingle(),
+    ]);
+    const hoy = hoyEn(ajustes.data?.zona_horaria ?? "Europe/Madrid");
+    if (locales.data?.length === 1 && fecha <= hoy) {
+      const { error: errorAprobar } = await supabase.rpc("aprobar_cierre", {
+        p_documento: fila.id,
+        p_local: locales.data[0].id,
+        p_fecha: fecha,
+        p_venta: venta,
+        ...(typeof datos.efectivo === "number" && { p_efectivo: datos.efectivo }),
+        ...(typeof datos.banco === "number" && { p_banco: datos.banco }),
+      });
+      if (!errorAprobar) {
+        revalidatePath(`/n/${org}/ventas`);
+        return { estado: "metido", detalle: `${fechaLarga(fecha)}: ${euros(venta)}` };
+      }
+      // Sin permiso para aprobar (p. ej. un empleado), queda pendiente de revisión.
+    }
+  }
+
+  return { estado: "pendiente" };
 }
 
 // Mete el ticket revisado como cierre del día.
