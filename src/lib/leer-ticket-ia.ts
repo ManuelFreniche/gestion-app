@@ -96,7 +96,7 @@ async function motivoHttp(proveedor: string, respuesta: Response): Promise<strin
   return `${proveedor} respondió ${respuesta.status}${detalle ? `: ${detalle}` : ""}.`;
 }
 
-async function leerConNvidia(bytes: Uint8Array, tipo: string, clave: string): Promise<LecturaIA> {
+async function leerConNvidia(bytes: Uint8Array, tipo: string, clave: string, ms: number): Promise<LecturaIA> {
   if (!["image/jpeg", "image/png", "image/webp"].includes(tipo)) {
     return { ticket: null, motivo: "NVIDIA solo lee imágenes, no PDFs." };
   }
@@ -123,7 +123,7 @@ async function leerConNvidia(bytes: Uint8Array, tipo: string, clave: string): Pr
           },
         ],
       }),
-      signal: AbortSignal.timeout(40_000),
+      signal: AbortSignal.timeout(ms),
     });
     if (!respuesta.ok) return { ticket: null, motivo: await motivoHttp("NVIDIA", respuesta) };
     const cuerpo = (await respuesta.json()) as { choices?: { message?: { content?: string } }[] };
@@ -134,7 +134,7 @@ async function leerConNvidia(bytes: Uint8Array, tipo: string, clave: string): Pr
   }
 }
 
-async function leerConClaude(bytes: Uint8Array, tipo: string, clave: string): Promise<LecturaIA> {
+async function leerConClaude(bytes: Uint8Array, tipo: string, clave: string, ms: number): Promise<LecturaIA> {
   if (!TIPOS_LEIBLES_POR_IA.includes(tipo)) return { ticket: null, motivo: "Tipo de archivo no compatible." };
   if (bytes.length > MAX_BYTES) return { ticket: null, motivo: "El archivo pesa más de 5 MB." };
 
@@ -154,7 +154,7 @@ async function leerConClaude(bytes: Uint8Array, tipo: string, clave: string): Pr
         tool_choice: { type: "tool", name: HERRAMIENTA.name },
         messages: [{ role: "user", content: [contenido, { type: "text", text: PROMPT }] }],
       }),
-      signal: AbortSignal.timeout(40_000),
+      signal: AbortSignal.timeout(ms),
     });
     if (!respuesta.ok) return { ticket: null, motivo: await motivoHttp("Claude", respuesta) };
     const cuerpo = (await respuesta.json()) as { content?: { type: string; input?: unknown }[] };
@@ -165,19 +165,19 @@ async function leerConClaude(bytes: Uint8Array, tipo: string, clave: string): Pr
   }
 }
 
-export async function leerTicketConIA(bytes: Uint8Array, tipo: string): Promise<LecturaIA> {
+export async function leerTicketConIA(bytes: Uint8Array, tipo: string, ms = 20_000): Promise<LecturaIA> {
   // Con clave de NVIDIA (gratis) se usa primero; si no lee nada, se prueba con Claude si hay clave.
   const nvidia = process.env.NVIDIA_API_KEY;
   const claude = process.env.ANTHROPIC_API_KEY;
   if (!nvidia && !claude) return { ticket: null };
   let motivo: string | undefined;
   if (nvidia) {
-    const lectura = await leerConNvidia(bytes, tipo, nvidia);
+    const lectura = await leerConNvidia(bytes, tipo, nvidia, ms);
     if (lectura.ticket) return lectura;
     motivo = lectura.motivo;
   }
   if (claude) {
-    const lectura = await leerConClaude(bytes, tipo, claude);
+    const lectura = await leerConClaude(bytes, tipo, claude, ms);
     return lectura.ticket ? lectura : { ticket: null, motivo: [motivo, lectura.motivo].filter(Boolean).join(" ") };
   }
   return { ticket: null, motivo };

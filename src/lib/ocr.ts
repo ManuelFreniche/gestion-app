@@ -6,20 +6,46 @@ import { getDocumentProxy, renderPageAsImage } from "unpdf";
 // @tesseract.js-data/spa para no descargarlo en cada petición.
 
 const RUTA_IDIOMA = path.join(process.cwd(), "node_modules", "@tesseract.js-data", "spa", "4.0.0_best_int");
-const MAX_PAGINAS = 3;
+const MAX_PAGINAS = 2;
+
+// El motor tarda en arrancar (carga idioma y WASM), así que se reutiliza entre subidas
+// mientras la instancia del servidor siga viva.
+let trabajador: Promise<import("tesseract.js").Worker> | null = null;
+
+async function obtenerTrabajador() {
+  if (!trabajador) {
+    trabajador = import("tesseract.js")
+      .then(({ createWorker }) => createWorker("spa", 1, { langPath: RUTA_IDIOMA, cacheMethod: "none", gzip: true }))
+      .catch((e) => {
+        trabajador = null;
+        throw e;
+      });
+  }
+  return trabajador;
+}
+
+// Para cortar una lectura que se ha pasado de tiempo y no bloquear las siguientes.
+export function reiniciarMotor() {
+  const viejo = trabajador;
+  trabajador = null;
+  viejo?.then((m) => m.terminate()).catch(() => {});
+}
 
 async function reconocer(imagenes: Uint8Array[]): Promise<string> {
-  const { createWorker } = await import("tesseract.js");
-  const trabajador = await createWorker("spa", 1, { langPath: RUTA_IDIOMA, cacheMethod: "none", gzip: true });
   try {
+    const motor = await obtenerTrabajador();
     const textos: string[] = [];
     for (const imagen of imagenes) {
-      const { data } = await trabajador.recognize(Buffer.from(imagen));
+      const { data } = await motor.recognize(Buffer.from(imagen));
       textos.push(data.text);
     }
     return textos.join("\n");
-  } finally {
-    await trabajador.terminate();
+  } catch (e) {
+    // Si el motor quedó en mal estado, la próxima vez se crea de nuevo.
+    const viejo = trabajador;
+    trabajador = null;
+    viejo?.then((m) => m.terminate()).catch(() => {});
+    throw e;
   }
 }
 
@@ -44,7 +70,7 @@ export async function textoDePdfEscaneado(bytes: Uint8Array): Promise<string> {
   const paginas = Math.min(pdf.numPages, MAX_PAGINAS);
   const imagenes: Uint8Array[] = [];
   for (let i = 1; i <= paginas; i++) {
-    const png = await renderPageAsImage(pdf, i, { canvasImport: () => import("@napi-rs/canvas"), scale: 2.5 });
+    const png = await renderPageAsImage(pdf, i, { canvasImport: () => import("@napi-rs/canvas"), scale: 2 });
     imagenes.push(new Uint8Array(png));
   }
   return reconocer(imagenes);

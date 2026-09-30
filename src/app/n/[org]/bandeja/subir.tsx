@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { Boton, Campo, Etiqueta } from "@/components/ui";
 import { crearClienteNavegador } from "@/lib/supabase/cliente";
-import { registrarDocumento } from "./acciones";
+import { registrarDocumento, type ResultadoSubida } from "./acciones";
 
 const EXTENSION: Record<string, string> = {
   "application/pdf": "pdf",
@@ -43,14 +43,16 @@ export function SubirTickets({ org, hoy }: { org: string; hoy: string }) {
         if (subida.error) {
           nuevos.push({ nombre: archivo.name, tono: "error", texto: "No se pudo subir. Inténtalo de nuevo." });
         } else {
-          const resultado = await registrarDocumento({
+          const resultado: ResultadoSubida = await registrarDocumento({
             org,
             ruta,
             nombre: archivo.name,
             tipoArchivo: archivo.type,
             // Con varios archivos no se puede saber a qué día corresponde cada uno.
             fecha: archivos.length === 1 ? fecha : undefined,
-          });
+          }).catch(() => ({
+            error: "Tardó demasiado en leerlo. Recarga la página: si se guardó, estará en la bandeja.",
+          }));
           if (resultado.error) nuevos.push({ nombre: archivo.name, tono: "error", texto: resultado.error });
           else if (resultado.estado === "repetido")
             nuevos.push({ nombre: archivo.name, tono: "repetido", texto: "Ya lo tenías: lo he ignorado." });
@@ -95,7 +97,7 @@ export function SubirTickets({ org, hoy }: { org: string; hoy: string }) {
       >
         <p className="font-medium">
           {subiendo
-            ? `Subiendo ${progreso.hecho} de ${progreso.total}…`
+            ? `Leyendo ${Math.min(progreso.hecho + 1, progreso.total)} de ${progreso.total}… (puede tardar un poco)`
             : arrastrando
               ? "Suéltalos aquí"
               : "Arrastra aquí los tickets"}

@@ -6,7 +6,7 @@ import { extractText, getDocumentProxy } from "unpdf";
 import { esFecha, euros, fechaLarga, hoyEn, leerImporte } from "@/lib/cierre";
 import { crearClienteServidor } from "@/lib/supabase/server";
 import { leerTicketConIA } from "@/lib/leer-ticket-ia";
-import { textoDeImagen, textoDePdfEscaneado } from "@/lib/ocr";
+import { reiniciarMotor, textoDeImagen, textoDePdfEscaneado } from "@/lib/ocr";
 import { leerTicketCierre, type TicketCierre } from "@/lib/ticket-cierre";
 
 export type EstadoBandeja = { error?: string; ok?: boolean };
@@ -17,6 +17,19 @@ export type ResultadoSubida = {
   estado?: "metido" | "pendiente" | "repetido";
   detalle?: string;
 };
+
+// Ejecuta una tarea con tiempo máximo: si se pasa, devuelve null y la subida sigue adelante.
+async function conLimite<T>(tarea: Promise<T>, ms: number): Promise<T | null> {
+  let temporizador: ReturnType<typeof setTimeout> | undefined;
+  const limite = new Promise<null>((resolve) => {
+    temporizador = setTimeout(() => resolve(null), ms);
+  });
+  try {
+    return await Promise.race([tarea, limite]);
+  } finally {
+    clearTimeout(temporizador);
+  }
+}
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -64,21 +77,36 @@ export async function registrarDocumento(entrada: {
       // PDF sin texto legible: se prueba con OCR.
     }
   }
+  // Presupuesto total de lectura: la subida tiene que terminar antes de que el servidor corte.
+  const inicio = Date.now();
+  const restante = () => Math.max(0, 42_000 - (Date.now() - inicio));
   let errorOcr: string | undefined;
+  let ocrTexto = "";
   if (!lectura) {
     try {
-      const ocr = esPdf ? await textoDePdfEscaneado(bytes) : await textoDeImagen(bytes);
-      textoLeido = textoLeido ? `${textoLeido}\n${ocr}` : ocr;
-      lectura = leerTicketCierre(ocr);
+      const ocr = await conLimite(
+        esPdf ? textoDePdfEscaneado(bytes) : textoDeImagen(bytes),
+        Math.min(restante(), 25_000),
+      );
+      if (ocr === null) {
+        errorOcr = "tardó demasiado";
+        reiniciarMotor();
+      } else {
+        ocrTexto = ocr;
+        textoLeido = textoLeido ? `${textoLeido}\n${ocr}` : ocr;
+        lectura = leerTicketCierre(ocr);
+      }
     } catch (e) {
       // Si el OCR falla, se sigue con la IA o a mano; el motivo se enseña en la tarjeta.
       errorOcr = e instanceof Error ? e.message.replace(/\s+/g, " ").slice(0, 160) : "error desconocido";
       console.error("OCR de la bandeja falló:", e);
     }
   }
+  // La IA solo se usa si el OCR no sacó casi nada de texto (foto mala); si ya hay texto que
+  // no es un cierre, preguntar a la IA solo alarga la espera.
   let motivoFallo: string | undefined;
-  if (!lectura) {
-    const ia = await leerTicketConIA(bytes, tipoArchivo);
+  if (!lectura && ocrTexto.trim().length < 80 && restante() > 6_000) {
+    const ia = await leerTicketConIA(bytes, tipoArchivo, Math.min(restante() - 2_000, 20_000));
     lectura = ia.ticket;
     motivoFallo = ia.motivo;
   }
