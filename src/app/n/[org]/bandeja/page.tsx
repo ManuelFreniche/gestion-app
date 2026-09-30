@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { Tarjeta } from "@/components/ui";
 import { hoyEn } from "@/lib/cierre";
+import type { FacturaDatos } from "@/lib/factura";
 import { exigirPermiso } from "@/lib/negocio";
 import { crearClienteServidor } from "@/lib/supabase/server";
 import { SubirTickets } from "./subir";
@@ -44,7 +45,6 @@ export default async function PaginaBandeja({ params }: PageProps<"/n/[org]/band
     if (!url) return [];
     const datos = (fila.datos ?? {}) as Record<string, unknown>;
     const numero = (v: unknown) => (typeof v === "number" ? v : undefined);
-    const texto = (v: unknown) => (typeof v === "string" ? v : undefined);
     return [
       {
         id: fila.id,
@@ -64,11 +64,8 @@ export default async function PaginaBandeja({ params }: PageProps<"/n/[org]/band
           venta: numero(datos.venta),
           efectivo: numero(datos.efectivo),
           banco: numero(datos.banco),
-          proveedor: texto(datos.proveedor),
-          categoria: texto(datos.categoria),
-          importe: numero(datos.importe),
-          numero: texto(datos.numero),
         },
+        facturas: Array.isArray(datos.facturas) ? (datos.facturas as FacturaDatos[]) : [],
       },
     ];
   });
@@ -78,7 +75,7 @@ export default async function PaginaBandeja({ params }: PageProps<"/n/[org]/band
       <div className="flex flex-col gap-1">
         <h1 className="text-2xl font-semibold">Bandeja</h1>
         <p className="text-texto-suave">
-          Los tickets de cierre que se leen bien se meten solos. Las facturas y lo que no se lee aparecen aquí para que lo mires.
+          Los tickets de cierre y las facturas que se leen bien se meten solos. Lo dudoso aparece aquí para que lo mires.
         </p>
       </div>
 

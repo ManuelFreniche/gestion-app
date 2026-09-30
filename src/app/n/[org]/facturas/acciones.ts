@@ -20,3 +20,14 @@ export async function marcarPago(formData: FormData): Promise<void> {
     .eq("organizacion_id", org);
   revalidatePath(`/n/${org}/facturas`);
 }
+
+// Borra una factura (y sus líneas), por ejemplo si se leyó mal y se metió sola.
+export async function borrarFactura(formData: FormData): Promise<void> {
+  const org = String(formData.get("org") ?? "");
+  const factura = String(formData.get("factura") ?? "");
+  if (!UUID.test(org) || !UUID.test(factura)) return;
+
+  const supabase = await crearClienteServidor();
+  await supabase.from("facturas_recibidas").delete().eq("id", factura).eq("organizacion_id", org);
+  revalidatePath(`/n/${org}/facturas`);
+}

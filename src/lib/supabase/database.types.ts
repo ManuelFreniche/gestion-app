@@ -214,6 +214,54 @@ export type Database = {
           },
         ]
       }
+      facturas_lineas: {
+        Row: {
+          cantidad: number | null
+          descripcion: string
+          factura_id: string
+          id: string
+          importe: number
+          organizacion_id: string
+          precio_unitario: number | null
+          unidad: string | null
+        }
+        Insert: {
+          cantidad?: number | null
+          descripcion: string
+          factura_id: string
+          id?: string
+          importe: number
+          organizacion_id: string
+          precio_unitario?: number | null
+          unidad?: string | null
+        }
+        Update: {
+          cantidad?: number | null
+          descripcion?: string
+          factura_id?: string
+          id?: string
+          importe?: number
+          organizacion_id?: string
+          precio_unitario?: number | null
+          unidad?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "facturas_lineas_factura_id_fkey"
+            columns: ["factura_id"]
+            isOneToOne: false
+            referencedRelation: "facturas_recibidas"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "facturas_lineas_organizacion_id_fkey"
+            columns: ["organizacion_id"]
+            isOneToOne: false
+            referencedRelation: "organizaciones"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       facturas_recibidas: {
         Row: {
           categoria: string
@@ -458,6 +506,10 @@ export type Database = {
         Returns: string
       }
       mis_permisos: { Args: { p_organizacion: string }; Returns: string[] }
+      registrar_facturas: {
+        Args: { p_documento: string; p_facturas: Json }
+        Returns: number
+      }
     }
     Enums: {
       rol_miembro: "dueno" | "encargado" | "empleado" | "gestoria"

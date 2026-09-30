@@ -2,9 +2,15 @@
 
 import { useRef, useState } from "react";
 import { Boton, Campo, Etiqueta } from "@/components/ui";
-import { leerTextoEnNavegador } from "@/lib/leer-en-navegador";
+import { leerTextoEnNavegador, prepararDocumento } from "@/lib/leer-en-navegador";
 import { crearClienteNavegador } from "@/lib/supabase/cliente";
-import { registrarDocumento, type ResultadoSubida } from "./acciones";
+import type { ResultadoSubida } from "@/lib/registrar-documento";
+
+// Cuántos documentos se leen a la vez.
+const A_LA_VEZ = 3;
+
+const conTiempo = <T,>(promesa: Promise<T>, ms: number, alternativa: T) =>
+  Promise.race([promesa, new Promise<T>((resolver) => setTimeout(() => resolver(alternativa), ms))]);
 
 const EXTENSION: Record<string, string> = {
   "application/pdf": "pdf",
@@ -34,42 +40,57 @@ export function SubirTickets({ org, hoy }: { org: string; hoy: string }) {
     const supabase = crearClienteNavegador();
     const nuevos: Resultado[] = [];
 
-    for (const [indice, archivo] of archivos.entries()) {
+    // Cada documento se sube, se prepara en este dispositivo y lo lee el servidor. Varios a la vez.
+    const hechos: Resultado[] = new Array(archivos.length);
+    let siguiente = 0;
+    let terminados = 0;
+    const leerUno = async (archivo: File): Promise<Resultado> => {
       const extension = EXTENSION[archivo.type];
-      if (!extension) {
-        nuevos.push({ nombre: archivo.name, tono: "error", texto: "Solo se pueden subir PDF o fotos (JPG, PNG)." });
-      } else {
-        const ruta = `${org}/${crypto.randomUUID()}.${extension}`;
-        const subida = await supabase.storage.from("documentos").upload(ruta, archivo, { contentType: archivo.type });
-        if (subida.error) {
-          nuevos.push({ nombre: archivo.name, tono: "error", texto: "No se pudo subir. Inténtalo de nuevo." });
-        } else {
-          // El documento se lee aquí, en el dispositivo: es mucho más rápido que hacerlo en el servidor.
-          const texto = await Promise.race([
-            leerTextoEnNavegador(archivo).catch(() => ""),
-            new Promise<string>((resolver) => setTimeout(() => resolver(""), 60_000)),
-          ]);
-          const resultado: ResultadoSubida = await registrarDocumento({
+      if (!extension) return { nombre: archivo.name, tono: "error", texto: "Solo se pueden subir PDF o fotos (JPG, PNG)." };
+      const ruta = `${org}/${crypto.randomUUID()}.${extension}`;
+      const subida = await supabase.storage.from("documentos").upload(ruta, archivo, { contentType: archivo.type });
+      if (subida.error) return { nombre: archivo.name, tono: "error", texto: "No se pudo subir. Inténtalo de nuevo." };
+
+      const enviar = (extra: { texto: string; imagenes: string[]; ocrHecho?: boolean }): Promise<ResultadoSubida> =>
+        fetch("/api/documentos", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
             org,
             ruta,
             nombre: archivo.name,
             tipoArchivo: archivo.type,
             // Con varios archivos no se puede saber a qué día corresponde cada uno.
             fecha: archivos.length === 1 ? fecha : undefined,
-            texto,
-          }).catch(() => ({
-            error: "Tardó demasiado en leerlo. Recarga la página: si se guardó, estará en la bandeja.",
-          }));
-          if (resultado.error) nuevos.push({ nombre: archivo.name, tono: "error", texto: resultado.error });
-          else if (resultado.estado === "repetido")
-            nuevos.push({ nombre: archivo.name, tono: "repetido", texto: "Ya lo tenías: lo he ignorado." });
-          else if (resultado.estado === "metido")
-            nuevos.push({ nombre: archivo.name, tono: "bien", texto: `Metido en el cierre · ${resultado.detalle}` });
-          else nuevos.push({ nombre: archivo.name, tono: "revisar", texto: resultado.detalle ?? "Falta revisarlo: míralo abajo." });
-        }
+            ...extra,
+          }),
+        })
+          .then((r) => r.json() as Promise<ResultadoSubida>)
+          .catch(() => ({ error: "Tardó demasiado en leerlo. Recarga la página: si se guardó, estará en la bandeja." }));
+
+      const preparado = await conTiempo(prepararDocumento(archivo).catch(() => null), 30_000, null);
+      let resultado = await enviar(preparado ?? { texto: "", imagenes: [] });
+      if (resultado.estado === "necesitaOcr") {
+        // El servidor no tiene IA configurada: se lee con OCR gratuito en este dispositivo.
+        const texto = await conTiempo(leerTextoEnNavegador(archivo).catch(() => ""), 60_000, "");
+        resultado = await enviar({ texto, imagenes: [], ocrHecho: true });
       }
-      setProgreso({ hecho: indice + 1, total: archivos.length });
-    }
+      if (resultado.error) return { nombre: archivo.name, tono: "error", texto: resultado.error };
+      if (resultado.estado === "repetido") return { nombre: archivo.name, tono: "repetido", texto: "Ya lo tenías: lo he ignorado." };
+      if (resultado.estado === "metido") return { nombre: archivo.name, tono: "bien", texto: resultado.detalle ?? "Metido." };
+      return { nombre: archivo.name, tono: "revisar", texto: resultado.detalle ?? "Falta revisarlo: míralo abajo." };
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(A_LA_VEZ, archivos.length) }, async () => {
+        while (siguiente < archivos.length) {
+          const indice = siguiente++;
+          hechos[indice] = await leerUno(archivos[indice]);
+          terminados++;
+          setProgreso({ hecho: terminados, total: archivos.length });
+        }
+      }),
+    );
+    nuevos.push(...hechos);
 
     setResultados(nuevos);
     setProgreso(null);

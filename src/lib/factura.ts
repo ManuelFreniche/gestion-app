@@ -145,3 +145,46 @@ export function leerFactura(texto: string): FacturaLeida | null {
     numero: detectarNumero(texto),
   };
 }
+
+// Una línea de producto de una factura (para comparar precios entre proveedores).
+export type LineaFactura = {
+  descripcion: string;
+  cantidad?: number;
+  unidad?: string;
+  precio_unitario?: number;
+  importe: number;
+};
+
+// Factura tal como se guarda en los datos del documento y se pasa a `registrar_facturas`.
+export type FacturaDatos = {
+  proveedor?: string;
+  numero?: string;
+  fecha?: string; // aaaa-mm-dd
+  importe?: number; // total con impuestos
+  base?: number; // base imponible, solo para comprobar las líneas
+  categoria: Categoria;
+  lineas: LineaFactura[];
+};
+
+export function facturaDesdeReglas(l: FacturaLeida): FacturaDatos {
+  return {
+    ...(l.proveedor && { proveedor: l.proveedor }),
+    ...(l.numero && { numero: l.numero }),
+    ...(l.fecha && { fecha: l.fecha }),
+    ...(l.importe !== null && { importe: l.importe }),
+    categoria: l.categoria,
+    lineas: [],
+  };
+}
+
+// Una factura se mete sola solo si está completa y las líneas cuadran con la base o el total.
+// Si algo no cuadra, queda en la bandeja para revisarla.
+export function facturaFiable(f: FacturaDatos, hoy: string): boolean {
+  if (!f.proveedor?.trim() || !f.fecha || f.fecha > hoy || !f.importe || f.importe <= 0) return false;
+  if (f.lineas.length === 0) return true;
+  const suma = f.lineas.reduce((t, l) => t + l.importe, 0);
+  const margen = 0.05 + 0.01 * f.lineas.length;
+  if (f.base !== undefined && Math.abs(suma - f.base) <= margen) return true;
+  if (Math.abs(suma - f.importe) <= margen) return true;
+  return f.base === undefined && suma <= f.importe + margen;
+}

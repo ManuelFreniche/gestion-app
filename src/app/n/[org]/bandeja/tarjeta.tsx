@@ -2,8 +2,9 @@
 
 import { useActionState } from "react";
 import { Aviso, Boton, Campo, Etiqueta, Tarjeta } from "@/components/ui";
-import { CATEGORIAS } from "@/lib/factura";
-import { aprobarCierre, aprobarFactura, cambiarTipoDocumento, descartarDocumento, type EstadoBandeja } from "./acciones";
+import { euros } from "@/lib/cierre";
+import { CATEGORIAS, type FacturaDatos } from "@/lib/factura";
+import { aprobarCierre, aprobarFacturas, cambiarTipoDocumento, descartarDocumento, type EstadoBandeja } from "./acciones";
 import { VistaPrevia } from "./vista-previa";
 
 export type DocumentoPendiente = {
@@ -18,11 +19,8 @@ export type DocumentoPendiente = {
     venta?: number;
     efectivo?: number;
     banco?: number;
-    proveedor?: string;
-    categoria?: string;
-    importe?: number;
-    numero?: string;
   };
+  facturas: FacturaDatos[];
 };
 
 type Local = { id: string; nombre: string };
@@ -59,105 +57,105 @@ function CambiarTipo({ org, id, a }: { org: string; id: string; a: "cierre" | "f
 }
 
 function TarjetaFactura({ org, documento, hoy }: { org: string; documento: DocumentoPendiente; hoy: string }) {
-  const [estadoAprobar, aprobar, aprobando] = useActionState<EstadoBandeja, FormData>(aprobarFactura, {});
+  const [estadoAprobar, aprobar, aprobando] = useActionState<EstadoBandeja, FormData>(aprobarFacturas, {});
   const [estadoDescartar, descartar, descartando] = useActionState<EstadoBandeja, FormData>(
     descartarDocumento,
     {},
   );
-  const l = documento.leido;
-  const leida = l.proveedor !== undefined || l.importe !== undefined;
+  // Sin nada leído se ofrece una factura en blanco para escribirla mirando el documento.
+  const facturas: FacturaDatos[] = documento.facturas.length > 0 ? documento.facturas : [{ categoria: "Otros", lineas: [] }];
+  const leidas = documento.facturas.length > 0;
+  const total = facturas.reduce((t, f) => t + (f.importe ?? 0), 0);
 
   return (
     <Tarjeta className="flex flex-col gap-5">
       <div className="flex flex-col gap-1">
-        <h2 className="font-semibold">Factura</h2>
+        <h2 className="font-semibold">{facturas.length > 1 ? `${facturas.length} facturas` : "Factura"}</h2>
         <p className="text-sm text-texto-suave">
           {documento.nombre} · {documento.recibido}
         </p>
+        {leidas && facturas.length > 1 && <p className="text-sm font-semibold">Total: {euros(total)}</p>}
       </div>
 
       <VistaPrevia url={documento.url} tipo={documento.tipoArchivo} nombre={documento.nombre} />
 
-      <form action={aprobar} className="flex flex-col gap-4">
+      <form action={aprobar} className="flex flex-col gap-6">
         <input type="hidden" name="org" value={org} />
         <input type="hidden" name="documento" value={documento.id} />
+        <input type="hidden" name="cantidad" value={facturas.length} />
 
         <p className="text-sm text-texto-suave">
-          {leida
-            ? "Esto es lo que he leído de la factura. Compruébalo antes de meterla."
+          {leidas
+            ? "Esto es lo que he leído. Compruébalo antes de meterlo."
             : "No he podido leer esta factura. Escribe los datos mirando el documento."}
         </p>
 
-        <div className="flex flex-col gap-1.5">
-          <Etiqueta htmlFor={`proveedor-${documento.id}`}>Proveedor</Etiqueta>
-          <Campo
-            id={`proveedor-${documento.id}`}
-            name="proveedor"
-            autoComplete="off"
-            defaultValue={l.proveedor ?? ""}
-            maxLength={120}
-            required
-          />
-        </div>
+        {facturas.map((f, i) => {
+          const id = `${documento.id}-${i}`;
+          return (
+            <fieldset key={id} className="flex flex-col gap-3 rounded-lg border border-borde p-3">
+              {facturas.length > 1 && (
+                <label className="flex items-center gap-2 text-sm font-medium">
+                  <input type="checkbox" name={`incluir_${i}`} defaultChecked className="size-5" />
+                  Factura {i + 1}
+                  {f.lineas.length > 0 && <span className="font-normal text-texto-suave"> · {f.lineas.length} productos</span>}
+                </label>
+              )}
+              {facturas.length === 1 && <input type="hidden" name="incluir_0" value="on" />}
 
-        <div className="flex flex-col gap-1.5">
-          <Etiqueta htmlFor={`importe-${documento.id}`} className="text-base">
-            Importe total (€)
-          </Etiqueta>
-          <Campo
-            id={`importe-${documento.id}`}
-            name="importe"
-            inputMode="decimal"
-            autoComplete="off"
-            defaultValue={coma(l.importe)}
-            className="h-14 text-2xl font-semibold"
-            required
-          />
-        </div>
+              <div className="flex flex-col gap-1.5">
+                <Etiqueta htmlFor={`proveedor-${id}`}>Proveedor</Etiqueta>
+                <Campo id={`proveedor-${id}`} name={`proveedor_${i}`} autoComplete="off" defaultValue={f.proveedor ?? ""} maxLength={120} required />
+              </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          <div className="flex flex-col gap-1.5">
-            <Etiqueta htmlFor={`fecha-${documento.id}`}>Fecha</Etiqueta>
-            <Campo
-              id={`fecha-${documento.id}`}
-              type="date"
-              name="fecha"
-              max={hoy}
-              defaultValue={l.fecha ?? hoy}
-              required
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Etiqueta htmlFor={`categoria-${documento.id}`}>Categoría</Etiqueta>
-            <select
-              id={`categoria-${documento.id}`}
-              name="categoria"
-              defaultValue={l.categoria ?? "Otros"}
-              className="h-11 rounded-lg border border-borde bg-superficie px-3 text-base"
-            >
-              {CATEGORIAS.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
+              <div className="flex flex-col gap-1.5">
+                <Etiqueta htmlFor={`importe-${id}`} className="text-base">
+                  Importe total (€)
+                </Etiqueta>
+                <Campo
+                  id={`importe-${id}`}
+                  name={`importe_${i}`}
+                  inputMode="decimal"
+                  autoComplete="off"
+                  defaultValue={coma(f.importe)}
+                  className="h-14 text-2xl font-semibold"
+                  required
+                />
+              </div>
 
-        <div className="flex flex-col gap-1.5">
-          <Etiqueta htmlFor={`numero-${documento.id}`}>Número de factura (opcional)</Etiqueta>
-          <Campo
-            id={`numero-${documento.id}`}
-            name="numero"
-            autoComplete="off"
-            defaultValue={l.numero ?? ""}
-            maxLength={60}
-          />
-        </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1.5">
+                  <Etiqueta htmlFor={`fecha-${id}`}>Fecha</Etiqueta>
+                  <Campo id={`fecha-${id}`} type="date" name={`fecha_${i}`} max={hoy} defaultValue={f.fecha ?? (leidas ? "" : hoy)} required />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Etiqueta htmlFor={`categoria-${id}`}>Categoría</Etiqueta>
+                  <select
+                    id={`categoria-${id}`}
+                    name={`categoria_${i}`}
+                    defaultValue={f.categoria}
+                    className="h-11 rounded-lg border border-borde bg-superficie px-3 text-base"
+                  >
+                    {CATEGORIAS.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <Etiqueta htmlFor={`numero-${id}`}>Número de factura (opcional)</Etiqueta>
+                <Campo id={`numero-${id}`} name={`numero_${i}`} autoComplete="off" defaultValue={f.numero ?? ""} maxLength={60} />
+              </div>
+            </fieldset>
+          );
+        })}
 
         <Aviso>{estadoAprobar.error}</Aviso>
         <Boton type="submit" disabled={aprobando || descartando} className="h-14 text-base">
-          {aprobando ? "Metiendo…" : "Meter factura"}
+          {aprobando ? "Metiendo…" : facturas.length > 1 ? "Meter las facturas" : "Meter factura"}
         </Boton>
       </form>
 
