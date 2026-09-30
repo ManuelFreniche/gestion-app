@@ -69,6 +69,7 @@ export default async function PaginaBandeja({ params }: PageProps<"/n/[org]/band
           banco: numero(datos.banco),
         },
         facturas: Array.isArray(datos.facturas) ? (datos.facturas as FacturaDatos[]) : [],
+        lector: datos.lector === "ia" ? "ia" : "reglas",
       },
     ];
   });
