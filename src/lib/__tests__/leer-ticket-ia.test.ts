@@ -20,3 +20,12 @@ describe("ticketDesdeRespuesta", () => {
     expect(t).toMatchObject({ venta: 50, efectivo: null, banco: null, fecha: null });
   });
 });
+
+import { jsonDeTexto } from "../leer-ticket-ia";
+
+describe("jsonDeTexto", () => {
+  it("saca el JSON aunque el modelo añada texto", () => {
+    expect(jsonDeTexto('Aquí está:\n```json\n{"venta": 12.5}\n```')).toEqual({ venta: 12.5 });
+    expect(jsonDeTexto("sin datos")).toBeNull();
+  });
+});

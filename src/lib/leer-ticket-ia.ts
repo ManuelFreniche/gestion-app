@@ -53,7 +53,75 @@ export function ticketDesdeRespuesta(entrada: unknown): TicketCierre | null {
   };
 }
 
+// Modelo de visión gratuito de NVIDIA (build.nvidia.com). Se puede cambiar con NVIDIA_MODELO.
+const MODELO_NVIDIA = "meta/llama-3.2-90b-vision-instruct";
+// La API de NVIDIA limita las imágenes en línea (~180.000 caracteres en base64).
+const MAX_BASE64_NVIDIA = 170_000;
+
+async function imagenPequena(bytes: Uint8Array): Promise<string | null> {
+  const { default: sharp } = await import("sharp");
+  for (const [lado, calidad] of [[1400, 75], [1000, 65], [800, 55]]) {
+    const jpg = await sharp(bytes).rotate().resize(lado, lado, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: calidad }).toBuffer();
+    const base64 = jpg.toString("base64");
+    if (base64.length <= MAX_BASE64_NVIDIA) return base64;
+  }
+  return null;
+}
+
+// Extrae el primer objeto JSON del texto que devuelve el modelo.
+export function jsonDeTexto(texto: string): unknown {
+  const inicio = texto.indexOf("{");
+  const fin = texto.lastIndexOf("}");
+  if (inicio < 0 || fin <= inicio) return null;
+  try {
+    return JSON.parse(texto.slice(inicio, fin + 1));
+  } catch {
+    return null;
+  }
+}
+
+async function leerConNvidia(bytes: Uint8Array, tipo: string, clave: string): Promise<TicketCierre | null> {
+  if (!["image/jpeg", "image/png", "image/webp"].includes(tipo)) return null;
+  try {
+    const imagen = await imagenPequena(bytes);
+    if (!imagen) return null;
+    const respuesta = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${clave}` },
+      body: JSON.stringify({
+        model: process.env.NVIDIA_MODELO || MODELO_NVIDIA,
+        max_tokens: 300,
+        temperature: 0,
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: `${PROMPT}\nResponde solo con un JSON: {"venta": number|null, "efectivo": number|null, "banco": number|null, "fecha": string|null}`,
+              },
+              { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imagen}` } },
+            ],
+          },
+        ],
+      }),
+      signal: AbortSignal.timeout(40_000),
+    });
+    if (!respuesta.ok) return null;
+    const cuerpo = (await respuesta.json()) as { choices?: { message?: { content?: string } }[] };
+    return ticketDesdeRespuesta(jsonDeTexto(cuerpo.choices?.[0]?.message?.content ?? ""));
+  } catch {
+    return null;
+  }
+}
+
 export async function leerTicketConIA(bytes: Uint8Array, tipo: string): Promise<TicketCierre | null> {
+  // Con clave de NVIDIA (gratis) se usa primero; si no lee nada, se prueba con Claude si hay clave.
+  const nvidia = process.env.NVIDIA_API_KEY;
+  if (nvidia) {
+    const lectura = await leerConNvidia(bytes, tipo, nvidia);
+    if (lectura) return lectura;
+  }
   const clave = process.env.ANTHROPIC_API_KEY;
   if (!clave || !TIPOS_LEIBLES_POR_IA.includes(tipo) || bytes.length > MAX_BYTES) return null;
 
