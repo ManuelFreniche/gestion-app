@@ -58,7 +58,13 @@ export async function registrarDocumento(entrada: {
       // PDF sin texto legible: se prueba con Claude.
     }
   }
-  if (!lectura) lectura = await leerTicketConIA(bytes, tipoArchivo);
+  let motivoFallo: string | undefined;
+  if (!lectura) {
+    const ia = await leerTicketConIA(bytes, tipoArchivo);
+    lectura = ia.ticket;
+    motivoFallo = ia.motivo;
+  }
+  const avisoLectura = motivoFallo ? `No se pudo leer solo. ${motivoFallo}` : undefined;
 
   const datos: Record<string, string | number> = {};
   if (lectura) {
@@ -151,10 +157,10 @@ export async function registrarDocumento(entrada: {
     }
   }
 
-  return {
-    estado: "pendiente",
-    ...(recuperado && { detalle: "Lo habías descartado: lo he vuelto a poner en la bandeja." }),
-  };
+  const detalle = [recuperado && "Lo habías descartado: lo he vuelto a poner en la bandeja.", avisoLectura]
+    .filter(Boolean)
+    .join(" ");
+  return { estado: "pendiente", ...(detalle && { detalle }) };
 }
 
 // Mete el ticket revisado como cierre del día.

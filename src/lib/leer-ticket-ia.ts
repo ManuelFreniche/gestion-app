@@ -80,11 +80,29 @@ export function jsonDeTexto(texto: string): unknown {
   }
 }
 
-async function leerConNvidia(bytes: Uint8Array, tipo: string, clave: string): Promise<TicketCierre | null> {
-  if (!["image/jpeg", "image/png", "image/webp"].includes(tipo)) return null;
+export type LecturaIA = { ticket: TicketCierre | null; motivo?: string };
+
+// Resumen corto del error que devuelve una API, sin datos sensibles.
+async function motivoHttp(proveedor: string, respuesta: Response): Promise<string> {
+  let detalle = "";
+  try {
+    const texto = await respuesta.text();
+    const json = jsonDeTexto(texto) as { error?: { message?: string } | string; detail?: string; message?: string } | null;
+    const bruto = typeof json?.error === "string" ? json.error : (json?.error?.message ?? json?.detail ?? json?.message ?? texto);
+    detalle = String(bruto).replace(/\s+/g, " ").slice(0, 120);
+  } catch {
+    // Sin detalle.
+  }
+  return `${proveedor} respondió ${respuesta.status}${detalle ? `: ${detalle}` : ""}.`;
+}
+
+async function leerConNvidia(bytes: Uint8Array, tipo: string, clave: string): Promise<LecturaIA> {
+  if (!["image/jpeg", "image/png", "image/webp"].includes(tipo)) {
+    return { ticket: null, motivo: "NVIDIA solo lee imágenes, no PDFs." };
+  }
   try {
     const imagen = await imagenPequena(bytes);
-    if (!imagen) return null;
+    if (!imagen) return { ticket: null, motivo: "La imagen es demasiado grande para NVIDIA." };
     const respuesta = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${clave}` },
@@ -107,23 +125,18 @@ async function leerConNvidia(bytes: Uint8Array, tipo: string, clave: string): Pr
       }),
       signal: AbortSignal.timeout(40_000),
     });
-    if (!respuesta.ok) return null;
+    if (!respuesta.ok) return { ticket: null, motivo: await motivoHttp("NVIDIA", respuesta) };
     const cuerpo = (await respuesta.json()) as { choices?: { message?: { content?: string } }[] };
-    return ticketDesdeRespuesta(jsonDeTexto(cuerpo.choices?.[0]?.message?.content ?? ""));
-  } catch {
-    return null;
+    const ticket = ticketDesdeRespuesta(jsonDeTexto(cuerpo.choices?.[0]?.message?.content ?? ""));
+    return ticket ? { ticket } : { ticket: null, motivo: "NVIDIA no encontró la venta en la imagen." };
+  } catch (e) {
+    return { ticket: null, motivo: `No se pudo consultar a NVIDIA (${e instanceof Error ? e.message.slice(0, 80) : "error"}).` };
   }
 }
 
-export async function leerTicketConIA(bytes: Uint8Array, tipo: string): Promise<TicketCierre | null> {
-  // Con clave de NVIDIA (gratis) se usa primero; si no lee nada, se prueba con Claude si hay clave.
-  const nvidia = process.env.NVIDIA_API_KEY;
-  if (nvidia) {
-    const lectura = await leerConNvidia(bytes, tipo, nvidia);
-    if (lectura) return lectura;
-  }
-  const clave = process.env.ANTHROPIC_API_KEY;
-  if (!clave || !TIPOS_LEIBLES_POR_IA.includes(tipo) || bytes.length > MAX_BYTES) return null;
+async function leerConClaude(bytes: Uint8Array, tipo: string, clave: string): Promise<LecturaIA> {
+  if (!TIPOS_LEIBLES_POR_IA.includes(tipo)) return { ticket: null, motivo: "Tipo de archivo no compatible." };
+  if (bytes.length > MAX_BYTES) return { ticket: null, motivo: "El archivo pesa más de 5 MB." };
 
   const contenido = {
     type: tipo === "application/pdf" ? "document" : "image",
@@ -143,10 +156,31 @@ export async function leerTicketConIA(bytes: Uint8Array, tipo: string): Promise<
       }),
       signal: AbortSignal.timeout(40_000),
     });
-    if (!respuesta.ok) return null;
+    if (!respuesta.ok) return { ticket: null, motivo: await motivoHttp("Claude", respuesta) };
     const cuerpo = (await respuesta.json()) as { content?: { type: string; input?: unknown }[] };
-    return ticketDesdeRespuesta(cuerpo.content?.find((c) => c.type === "tool_use")?.input);
-  } catch {
-    return null;
+    const ticket = ticketDesdeRespuesta(cuerpo.content?.find((c) => c.type === "tool_use")?.input);
+    return ticket ? { ticket } : { ticket: null, motivo: "Claude no encontró la venta en el archivo." };
+  } catch (e) {
+    return { ticket: null, motivo: `No se pudo consultar a Claude (${e instanceof Error ? e.message.slice(0, 80) : "error"}).` };
   }
+}
+
+export async function leerTicketConIA(bytes: Uint8Array, tipo: string): Promise<LecturaIA> {
+  // Con clave de NVIDIA (gratis) se usa primero; si no lee nada, se prueba con Claude si hay clave.
+  const nvidia = process.env.NVIDIA_API_KEY;
+  const claude = process.env.ANTHROPIC_API_KEY;
+  if (!nvidia && !claude) {
+    return { ticket: null, motivo: "Falta la clave NVIDIA_API_KEY en Vercel (y volver a desplegar para que la use)." };
+  }
+  let motivo: string | undefined;
+  if (nvidia) {
+    const lectura = await leerConNvidia(bytes, tipo, nvidia);
+    if (lectura.ticket) return lectura;
+    motivo = lectura.motivo;
+  }
+  if (claude) {
+    const lectura = await leerConClaude(bytes, tipo, claude);
+    return lectura.ticket ? lectura : { ticket: null, motivo: [motivo, lectura.motivo].filter(Boolean).join(" ") };
+  }
+  return { ticket: null, motivo };
 }
