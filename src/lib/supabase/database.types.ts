@@ -214,6 +214,111 @@ export type Database = {
           },
         ]
       }
+      facturas_lineas: {
+        Row: {
+          cantidad: number | null
+          descripcion: string
+          factura_id: string
+          id: string
+          importe: number
+          organizacion_id: string
+          precio_unitario: number | null
+          unidad: string | null
+        }
+        Insert: {
+          cantidad?: number | null
+          descripcion: string
+          factura_id: string
+          id?: string
+          importe: number
+          organizacion_id: string
+          precio_unitario?: number | null
+          unidad?: string | null
+        }
+        Update: {
+          cantidad?: number | null
+          descripcion?: string
+          factura_id?: string
+          id?: string
+          importe?: number
+          organizacion_id?: string
+          precio_unitario?: number | null
+          unidad?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "facturas_lineas_factura_id_fkey"
+            columns: ["factura_id"]
+            isOneToOne: false
+            referencedRelation: "facturas_recibidas"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "facturas_lineas_organizacion_id_fkey"
+            columns: ["organizacion_id"]
+            isOneToOne: false
+            referencedRelation: "organizaciones"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      facturas_recibidas: {
+        Row: {
+          categoria: string
+          creado_en: string | null
+          creado_por: string | null
+          documento_id: string | null
+          estado_pago: string
+          fecha: string
+          id: string
+          importe: number
+          numero: string | null
+          organizacion_id: string
+          proveedor: string
+        }
+        Insert: {
+          categoria?: string
+          creado_en?: string | null
+          creado_por?: string | null
+          documento_id?: string | null
+          estado_pago?: string
+          fecha: string
+          id?: string
+          importe: number
+          numero?: string | null
+          organizacion_id: string
+          proveedor: string
+        }
+        Update: {
+          categoria?: string
+          creado_en?: string | null
+          creado_por?: string | null
+          documento_id?: string | null
+          estado_pago?: string
+          fecha?: string
+          id?: string
+          importe?: number
+          numero?: string | null
+          organizacion_id?: string
+          proveedor?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "facturas_recibidas_documento_id_fkey"
+            columns: ["documento_id"]
+            isOneToOne: false
+            referencedRelation: "documentos_entrantes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "facturas_recibidas_organizacion_id_fkey"
+            columns: ["organizacion_id"]
+            isOneToOne: false
+            referencedRelation: "organizaciones"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       locales: {
         Row: {
           creado_en: string
@@ -374,6 +479,17 @@ export type Database = {
         }
         Returns: string
       }
+      aprobar_factura: {
+        Args: {
+          p_categoria?: string
+          p_documento: string
+          p_fecha: string
+          p_importe: number
+          p_numero?: string
+          p_proveedor: string
+        }
+        Returns: string
+      }
       crear_organizacion: {
         Args: { p_local?: string; p_nombre: string }
         Returns: string
@@ -390,6 +506,10 @@ export type Database = {
         Returns: string
       }
       mis_permisos: { Args: { p_organizacion: string }; Returns: string[] }
+      registrar_facturas: {
+        Args: { p_documento: string; p_facturas: Json }
+        Returns: number
+      }
     }
     Enums: {
       rol_miembro: "dueno" | "encargado" | "empleado" | "gestoria"

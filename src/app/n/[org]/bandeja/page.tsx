@@ -1,6 +1,8 @@
 import { notFound } from "next/navigation";
 import { Tarjeta } from "@/components/ui";
 import { hoyEn } from "@/lib/cierre";
+import type { FacturaDatos } from "@/lib/factura";
+import { hayIA } from "@/lib/leer-documento-ia";
 import { exigirPermiso } from "@/lib/negocio";
 import { crearClienteServidor } from "@/lib/supabase/server";
 import { SubirTickets } from "./subir";
@@ -22,7 +24,7 @@ export default async function PaginaBandeja({ params }: PageProps<"/n/[org]/band
     supabase.from("locales").select("id, nombre").eq("organizacion_id", org).order("creado_en"),
     supabase
       .from("documentos_entrantes")
-      .select("id, archivo_ruta, archivo_nombre, archivo_tipo, datos, recibido_en")
+      .select("id, tipo, archivo_ruta, archivo_nombre, archivo_tipo, datos, recibido_en")
       .eq("organizacion_id", org)
       .eq("estado", "pendiente")
       .order("recibido_en", { ascending: false })
@@ -47,6 +49,7 @@ export default async function PaginaBandeja({ params }: PageProps<"/n/[org]/band
     return [
       {
         id: fila.id,
+        tipo: fila.tipo === "factura" ? "factura" : "cierre",
         nombre: fila.archivo_nombre,
         tipoArchivo: fila.archivo_tipo,
         url,
@@ -63,6 +66,7 @@ export default async function PaginaBandeja({ params }: PageProps<"/n/[org]/band
           efectivo: numero(datos.efectivo),
           banco: numero(datos.banco),
         },
+        facturas: Array.isArray(datos.facturas) ? (datos.facturas as FacturaDatos[]) : [],
       },
     ];
   });
@@ -70,19 +74,31 @@ export default async function PaginaBandeja({ params }: PageProps<"/n/[org]/band
   return (
     <div className="mx-auto flex w-full max-w-xl flex-col gap-6">
       <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold">Bandeja</h1>
-        <p className="text-texto-suave">
-          Los tickets que se leen bien se meten solos. Lo que no, aparece aquí para que lo mires.
+        <h1 className="text-3xl font-bold">Bandeja</h1>
+        <p className="text-lg text-texto-suave">
+          Sube tus facturas y tickets. Yo los leo y te los enseño aquí: tú decides cuáles se meten.
         </p>
       </div>
 
+      {!hayIA() && (
+        <Tarjeta className="border-peligro">
+          <p className="text-base font-semibold text-peligro">Falta activar el lector inteligente</p>
+          <p className="mt-1 text-base">
+            Sin él solo leo bien los PDF con texto claro; las fotos y los escaneos no. Quien administra la web tiene que añadir la clave{" "}
+            <code className="rounded bg-fondo px-1">GEMINI_API_KEY</code> en Vercel (es gratuita).
+          </p>
+        </Tarjeta>
+      )}
+
       <Tarjeta>
-        <SubirTickets org={org} hoy={hoyEn(zona)} />
+        <SubirTickets org={org} hoy={hoyEn(zona)} lectorDirecto={Boolean(process.env.GEMINI_API_KEY)} />
       </Tarjeta>
+
+      {documentos.length > 0 && <h2 className="text-2xl font-bold">Por revisar ({documentos.length})</h2>}
 
       {documentos.length === 0 ? (
         <Tarjeta>
-          <p className="text-texto-suave">No hay nada por revisar. Todo al día.</p>
+          <p className="text-lg text-texto-suave">No hay nada por revisar. Todo al día.</p>
         </Tarjeta>
       ) : (
         documentos.map((documento) => (

@@ -84,3 +84,66 @@ export async function leerTextoEnNavegador(archivo: File): Promise<string> {
   }
   return ocr.join("\n");
 }
+
+// ---- Preparar un documento para que el servidor lo lea con IA ----
+// Un PDF con texto se manda como texto (instantáneo). Un PDF escaneado o una foto se mandan como
+// imágenes pequeñas de sus páginas: la IA las lee directamente, sin esperar a ningún OCR.
+
+const MIN_TEXTO_IA = 300; // con menos texto que esto, el PDF se considera escaneado
+const PAGINAS_TEXTO = 30;
+const PAGINAS_IMAGEN = 8;
+const LADO_IA = 1400;
+const MAX_BASE64_TOTAL = 3_300_000; // la petición a Vercel admite 4,5 MB
+
+export type DocumentoPreparado = { texto: string; imagenes: string[]; paginas?: string[] };
+
+function jpegBase64(lienzo: HTMLCanvasElement, calidad = 0.68): string {
+  return lienzo.toDataURL("image/jpeg", calidad).split(",")[1] ?? "";
+}
+
+// Con `sinImagenes` (el servidor lee el archivo original) solo se extrae el texto del PDF.
+export async function prepararDocumento(archivo: File, sinImagenes = false): Promise<DocumentoPreparado> {
+  if (archivo.type !== "application/pdf") {
+    if (sinImagenes) return { texto: "", imagenes: [] };
+    const imagen = await createImageBitmap(archivo);
+    const escala = Math.min(1, LADO_IA / Math.max(imagen.width, imagen.height));
+    const lienzo = document.createElement("canvas");
+    lienzo.width = Math.round(imagen.width * escala);
+    lienzo.height = Math.round(imagen.height * escala);
+    lienzo.getContext("2d")?.drawImage(imagen, 0, 0, lienzo.width, lienzo.height);
+    imagen.close();
+    return { texto: "", imagenes: [jpegBase64(lienzo)] };
+  }
+
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+    "pdfjs-dist/legacy/build/pdf.worker.min.mjs",
+    import.meta.url,
+  ).toString();
+  const pdf = await pdfjs.getDocument({ data: new Uint8Array(await archivo.arrayBuffer()) }).promise;
+
+  const textos: string[] = [];
+  for (let n = 1; n <= Math.min(pdf.numPages, PAGINAS_TEXTO); n++) {
+    const contenido = await (await pdf.getPage(n)).getTextContent();
+    textos.push(contenido.items.map((i) => ("str" in i ? i.str : "")).join("\n"));
+  }
+  const texto = textos.join("\n\n");
+  if (sinImagenes || texto.replace(/\s/g, "").length >= MIN_TEXTO_IA) return { texto, imagenes: [], paginas: textos };
+
+  const imagenes: string[] = [];
+  let total = 0;
+  for (let n = 1; n <= Math.min(pdf.numPages, PAGINAS_IMAGEN); n++) {
+    const pagina = await pdf.getPage(n);
+    const base = pagina.getViewport({ scale: 1 });
+    const vista = pagina.getViewport({ scale: Math.min(2.5, LADO_IA / Math.max(base.width, base.height)) });
+    const lienzo = document.createElement("canvas");
+    lienzo.width = vista.width;
+    lienzo.height = vista.height;
+    await pagina.render({ canvas: lienzo, viewport: vista }).promise;
+    const imagen = jpegBase64(lienzo);
+    if (total + imagen.length > MAX_BASE64_TOTAL) break;
+    total += imagen.length;
+    imagenes.push(imagen);
+  }
+  return { texto, imagenes };
+}
