@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { extractText, getDocumentProxy } from "unpdf";
 import { esFecha, euros, fechaLarga, hoyEn, leerImporte } from "@/lib/cierre";
 import { crearClienteServidor } from "@/lib/supabase/server";
+import { leerFactura, CATEGORIAS } from "@/lib/factura";
 import { leerTicketConIA } from "@/lib/leer-ticket-ia";
 import { leerTicketCierre, type TicketCierre } from "@/lib/ticket-cierre";
 
@@ -71,9 +72,16 @@ export async function registrarDocumento(entrada: {
     lectura = ia.ticket;
     motivoFallo = ia.motivo;
   }
+  // Si no es un ticket de cierre, se prueba como factura de proveedor.
+  const factura = !lectura && textoLeido.trim() ? leerFactura(textoLeido) : null;
+  const tipo = lectura ? "cierre" : textoLeido.trim() ? "factura" : "cierre";
   const avisoLectura = lectura
     ? undefined
-    : [
+    : tipo === "factura"
+      ? factura
+        ? "Parece una factura: revisa los datos y métela."
+        : "No he reconocido los datos de la factura: escríbelos mirando el documento."
+      : [
         "No se pudo leer solo: no reconozco el formato del ticket.",
         !textoLeido.trim() && "No se encontró texto en el documento.",
         motivoFallo,
@@ -87,6 +95,13 @@ export async function registrarDocumento(entrada: {
     if (lectura.efectivo !== null) datos.efectivo = lectura.efectivo;
     if (lectura.banco !== null) datos.banco = lectura.banco;
     if (lectura.fecha) datos.fecha = lectura.fecha;
+  } else if (tipo === "factura") {
+    if (factura?.proveedor) datos.proveedor = factura.proveedor;
+    if (factura) datos.categoria = factura.categoria;
+    if (factura?.importe != null) datos.importe = factura.importe;
+    if (factura?.fecha) datos.fecha = factura.fecha;
+    if (factura?.numero) datos.numero = factura.numero;
+    datos.texto_leido = textoLeido.replace(/\s+/g, " ").trim().slice(0, 1500);
   } else if (textoLeido.trim()) {
     // Para poder ver qué texto se leyó cuando el formato no se reconoce.
     datos.texto_leido = textoLeido.replace(/\s+/g, " ").trim().slice(0, 1500);
@@ -95,7 +110,7 @@ export async function registrarDocumento(entrada: {
   // Sin .select(): quien sube pero no revisa (p. ej. un empleado) no puede leer la fila.
   const { error } = await supabase.from("documentos_entrantes").insert({
     organizacion_id: org,
-    tipo: "cierre",
+    tipo,
     origen: "subida",
     archivo_ruta: ruta,
     archivo_nombre: nombre.slice(0, 200),
@@ -115,7 +130,7 @@ export async function registrarDocumento(entrada: {
         .eq("organizacion_id", org)
         .eq("huella", huella)
         .maybeSingle();
-      if (previo?.estado === "descartado" || (previo?.estado === "pendiente" && lectura)) {
+      if (previo?.estado === "descartado" || (previo?.estado === "pendiente" && (lectura || factura))) {
         // Lo descartado no se vuelve a descartar solo: vuelve a la bandeja para que decidas.
         // Si ahora se lee y antes no, se actualizan los datos leídos.
         const { error: errorRecuperar } = await supabase
@@ -124,6 +139,7 @@ export async function registrarDocumento(entrada: {
             estado: "pendiente",
             revisado_en: null,
             revisado_por: null,
+            tipo,
             ...(Object.keys(datos).length > 0 && { datos }),
           })
           .eq("id", previo.id);
@@ -144,7 +160,7 @@ export async function registrarDocumento(entrada: {
   // Aprobación automática: solo con la venta leída, el día conocido y un único local.
   const fecha = typeof datos.fecha === "string" ? datos.fecha : entrada.fecha;
   const venta = typeof datos.venta === "number" ? datos.venta : undefined;
-  if (venta !== undefined && esFecha(fecha)) {
+  if (tipo === "cierre" && venta !== undefined && esFecha(fecha)) {
     const { data: fila } = await supabase
       .from("documentos_entrantes")
       .select("id")
@@ -224,6 +240,70 @@ export async function aprobarCierre(_: EstadoBandeja, formData: FormData): Promi
 
   revalidatePath(`/n/${org}/bandeja`);
   revalidatePath(`/n/${org}/ventas`);
+  return { ok: true };
+}
+
+// Mete la factura revisada como factura recibida.
+export async function aprobarFactura(_: EstadoBandeja, formData: FormData): Promise<EstadoBandeja> {
+  const org = String(formData.get("org") ?? "");
+  const documento = String(formData.get("documento") ?? "");
+  const proveedor = String(formData.get("proveedor") ?? "").trim();
+  const fecha = String(formData.get("fecha") ?? "");
+  const importe = leerImporte(String(formData.get("importe") ?? ""));
+  const categoria = String(formData.get("categoria") ?? "");
+  const numero = String(formData.get("numero") ?? "").trim();
+
+  if (![org, documento].every((id) => UUID.test(id)) || !esFecha(fecha)) {
+    return { error: "Algo ha ido mal. Recarga la página e inténtalo de nuevo." };
+  }
+  if (!proveedor || proveedor.length > 120) return { error: "Escribe el proveedor." };
+  if (importe === null) return { error: "Escribe el importe total, por ejemplo 121,00." };
+  if (!(CATEGORIAS as readonly string[]).includes(categoria)) return { error: "Elige una categoría." };
+  if (numero.length > 60) return { error: "El número de factura es demasiado largo." };
+
+  const supabase = await crearClienteServidor();
+  const { error } = await supabase.rpc("aprobar_factura", {
+    p_documento: documento,
+    p_proveedor: proveedor,
+    p_fecha: fecha,
+    p_importe: importe,
+    p_categoria: categoria,
+    ...(numero && { p_numero: numero }),
+  });
+
+  if (error) {
+    return {
+      error:
+        error.code === "P0002"
+          ? "Esta factura ya se revisó. Recarga la página."
+          : error.code === "42501"
+            ? "No tienes permiso para meter facturas."
+            : "No se pudo meter la factura. Inténtalo de nuevo.",
+    };
+  }
+
+  revalidatePath(`/n/${org}/bandeja`);
+  revalidatePath(`/n/${org}/facturas`);
+  return { ok: true };
+}
+
+// Cambia un documento pendiente entre ticket de cierre y factura (cuando no se lee solo).
+export async function cambiarTipoDocumento(_: EstadoBandeja, formData: FormData): Promise<EstadoBandeja> {
+  const org = String(formData.get("org") ?? "");
+  const documento = String(formData.get("documento") ?? "");
+  const tipo = String(formData.get("tipo") ?? "");
+  if (!UUID.test(org) || !UUID.test(documento) || (tipo !== "cierre" && tipo !== "factura")) {
+    return { error: "Algo ha ido mal. Recarga la página." };
+  }
+  const supabase = await crearClienteServidor();
+  const { error } = await supabase
+    .from("documentos_entrantes")
+    .update({ tipo })
+    .eq("id", documento)
+    .eq("organizacion_id", org)
+    .eq("estado", "pendiente");
+  if (error) return { error: "No se pudo cambiar. Inténtalo de nuevo." };
+  revalidatePath(`/n/${org}/bandeja`);
   return { ok: true };
 }
 

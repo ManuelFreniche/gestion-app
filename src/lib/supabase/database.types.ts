@@ -214,6 +214,63 @@ export type Database = {
           },
         ]
       }
+      facturas_recibidas: {
+        Row: {
+          categoria: string
+          creado_en: string | null
+          creado_por: string | null
+          documento_id: string | null
+          estado_pago: string
+          fecha: string
+          id: string
+          importe: number
+          numero: string | null
+          organizacion_id: string
+          proveedor: string
+        }
+        Insert: {
+          categoria?: string
+          creado_en?: string | null
+          creado_por?: string | null
+          documento_id?: string | null
+          estado_pago?: string
+          fecha: string
+          id?: string
+          importe: number
+          numero?: string | null
+          organizacion_id: string
+          proveedor: string
+        }
+        Update: {
+          categoria?: string
+          creado_en?: string | null
+          creado_por?: string | null
+          documento_id?: string | null
+          estado_pago?: string
+          fecha?: string
+          id?: string
+          importe?: number
+          numero?: string | null
+          organizacion_id?: string
+          proveedor?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "facturas_recibidas_documento_id_fkey"
+            columns: ["documento_id"]
+            isOneToOne: false
+            referencedRelation: "documentos_entrantes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "facturas_recibidas_organizacion_id_fkey"
+            columns: ["organizacion_id"]
+            isOneToOne: false
+            referencedRelation: "organizaciones"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       locales: {
         Row: {
           creado_en: string
@@ -371,6 +428,17 @@ export type Database = {
           p_fecha: string
           p_local: string
           p_venta: number
+        }
+        Returns: string
+      }
+      aprobar_factura: {
+        Args: {
+          p_categoria?: string
+          p_documento: string
+          p_fecha: string
+          p_importe: number
+          p_numero?: string
+          p_proveedor: string
         }
         Returns: string
       }

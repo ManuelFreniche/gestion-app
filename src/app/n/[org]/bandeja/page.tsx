@@ -22,7 +22,7 @@ export default async function PaginaBandeja({ params }: PageProps<"/n/[org]/band
     supabase.from("locales").select("id, nombre").eq("organizacion_id", org).order("creado_en"),
     supabase
       .from("documentos_entrantes")
-      .select("id, archivo_ruta, archivo_nombre, archivo_tipo, datos, recibido_en")
+      .select("id, tipo, archivo_ruta, archivo_nombre, archivo_tipo, datos, recibido_en")
       .eq("organizacion_id", org)
       .eq("estado", "pendiente")
       .order("recibido_en", { ascending: false })
@@ -44,9 +44,11 @@ export default async function PaginaBandeja({ params }: PageProps<"/n/[org]/band
     if (!url) return [];
     const datos = (fila.datos ?? {}) as Record<string, unknown>;
     const numero = (v: unknown) => (typeof v === "number" ? v : undefined);
+    const texto = (v: unknown) => (typeof v === "string" ? v : undefined);
     return [
       {
         id: fila.id,
+        tipo: fila.tipo === "factura" ? "factura" : "cierre",
         nombre: fila.archivo_nombre,
         tipoArchivo: fila.archivo_tipo,
         url,
@@ -62,6 +64,10 @@ export default async function PaginaBandeja({ params }: PageProps<"/n/[org]/band
           venta: numero(datos.venta),
           efectivo: numero(datos.efectivo),
           banco: numero(datos.banco),
+          proveedor: texto(datos.proveedor),
+          categoria: texto(datos.categoria),
+          importe: numero(datos.importe),
+          numero: texto(datos.numero),
         },
       },
     ];
@@ -72,7 +78,7 @@ export default async function PaginaBandeja({ params }: PageProps<"/n/[org]/band
       <div className="flex flex-col gap-1">
         <h1 className="text-2xl font-semibold">Bandeja</h1>
         <p className="text-texto-suave">
-          Los tickets que se leen bien se meten solos. Lo que no, aparece aquí para que lo mires.
+          Los tickets de cierre que se leen bien se meten solos. Las facturas y lo que no se lee aparecen aquí para que lo mires.
         </p>
       </div>
 
