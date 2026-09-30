@@ -146,7 +146,7 @@ export function documentoDesdeRespuesta(entrada: unknown): DocumentoIA | null {
 
 // Gemini (Google AI Studio) tiene un plan gratuito y lee el PDF o la foto originales entera,
 // todas las páginas, sin que el navegador prepare nada.
-const MODELOS_GEMINI = ["gemini-flash-latest", "gemini-2.5-flash", "gemini-2.5-flash-lite"];
+const MODELOS_GEMINI = ["gemini-flash-latest", "gemini-2.5-flash"];
 const TIPOS_GEMINI = ["application/pdf", "image/jpeg", "image/png", "image/webp", "image/heic"];
 const MAX_BYTES_GEMINI = 14 * 1024 * 1024; // la petición admite 20 MB con el base64
 
@@ -184,17 +184,24 @@ async function conGemini(entrada: EntradaIA, clave: string, ms: number): Promise
   try {
     // Google a veces responde "demasiada demanda" (503/429): se reintenta y se prueban otros modelos
     // gratuitos antes de rendirse.
-    const modelos = process.env.GEMINI_MODELO ? [process.env.GEMINI_MODELO] : MODELOS_GEMINI;
+    const modelos = process.env.GEMINI_MODELO ? [process.env.GEMINI_MODELO] : [...MODELOS_GEMINI];
     let respuesta: Response | undefined;
-    for (let intento = 0; intento < modelos.length * 2; intento++) {
+    let ultimoError: Response | undefined; // el último fallo que no sea "modelo inexistente"
+    for (let intento = 0; intento < 6 && modelos.length > 0; intento++) {
       const modelo = modelos[intento % modelos.length];
       respuesta = await llamar(modelo, true);
       // Algunos modelos no admiten desactivar el razonamiento: se repite sin ese ajuste.
       if (respuesta.status === 400) respuesta = await llamar(modelo, false);
-      const pasajero = [404, 429, 500, 502, 503, 504].includes(respuesta.status);
-      if (respuesta.ok || !pasajero || Date.now() > limite - 4000) break;
-      if (intento >= modelos.length - 1) await new Promise((r) => setTimeout(r, 1500));
+      if (respuesta.status === 404) {
+        // Ese modelo ya no existe o no está disponible: se quita de la rotación.
+        modelos.splice(modelos.indexOf(modelo), 1);
+        continue;
+      }
+      if (!respuesta.ok) ultimoError = respuesta;
+      if (respuesta.ok || ![429, 500, 502, 503, 504].includes(respuesta.status) || Date.now() > limite - 4000) break;
+      await new Promise((r) => setTimeout(r, 1500));
     }
+    if (!respuesta?.ok && ultimoError) respuesta = ultimoError;
     if (!respuesta) return { documento: null, motivo: "No se pudo consultar a Gemini." };
     if (!respuesta.ok) return { documento: null, motivo: await motivoHttp("Gemini", respuesta) };
     const cuerpo = (await respuesta.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
