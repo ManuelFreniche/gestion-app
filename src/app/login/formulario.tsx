@@ -34,6 +34,13 @@ export function FormularioLogin() {
         />
       </div>
 
+      {modo === "entrar" && (
+        <label className="flex items-center gap-3 py-1 text-base">
+          <input type="checkbox" name="recordar" defaultChecked className="size-6 accent-primario" />
+          Recordar mi sesión
+        </label>
+      )}
+
       <Aviso>{estado.error}</Aviso>
       {estado.mensaje && <p className="text-sm text-texto-suave">{estado.mensaje}</p>}
 

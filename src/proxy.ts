@@ -1,4 +1,5 @@
 import { createServerClient } from "@supabase/ssr";
+import { COOKIE_SESION_TEMPORAL, opcionesSesion } from "@/lib/supabase/cookies";
 import { NextResponse, type NextRequest } from "next/server";
 
 // Rutas que se pueden abrir sin sesión.
@@ -8,6 +9,7 @@ const RUTAS_PUBLICAS = ["/login", "/auth"];
 // Es solo una comprobación rápida: los permisos reales los decide la base de datos (RLS).
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
+  const temporal = request.cookies.get(COOKIE_SESION_TEMPORAL)?.value === "1";
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -21,7 +23,7 @@ export async function proxy(request: NextRequest) {
           cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
           response = NextResponse.next({ request });
           cookiesToSet.forEach(({ name, value, options }) =>
-            response.cookies.set(name, value, options),
+            response.cookies.set(name, value, opcionesSesion(options, temporal)),
           );
         },
       },

@@ -93,7 +93,10 @@ export type Database = {
         Row: {
           actualizado_en: string
           creado_en: string
+          banco: number | null
           creado_por: string | null
+          documento_id: string | null
+          efectivo: number | null
           fecha: string
           id: string
           local_id: string
@@ -104,7 +107,10 @@ export type Database = {
         Insert: {
           actualizado_en?: string
           creado_en?: string
+          banco?: number | null
           creado_por?: string | null
+          documento_id?: string | null
+          efectivo?: number | null
           fecha: string
           id?: string
           local_id: string
@@ -115,7 +121,10 @@ export type Database = {
         Update: {
           actualizado_en?: string
           creado_en?: string
+          banco?: number | null
           creado_por?: string | null
+          documento_id?: string | null
+          efectivo?: number | null
           fecha?: string
           id?: string
           local_id?: string
@@ -133,6 +142,71 @@ export type Database = {
           },
           {
             foreignKeyName: "cierres_diarios_organizacion_id_fkey"
+            columns: ["organizacion_id"]
+            isOneToOne: false
+            referencedRelation: "organizaciones"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      documentos_entrantes: {
+        Row: {
+          archivo_nombre: string
+          archivo_ruta: string
+          archivo_tipo: string
+          asunto: string | null
+          datos: Json
+          estado: string
+          huella: string
+          id: string
+          organizacion_id: string
+          origen: string
+          recibido_en: string
+          remitente: string | null
+          revisado_en: string | null
+          revisado_por: string | null
+          subido_por: string | null
+          tipo: string
+        }
+        Insert: {
+          archivo_nombre: string
+          archivo_ruta: string
+          archivo_tipo: string
+          asunto?: string | null
+          datos?: Json
+          estado?: string
+          huella: string
+          id?: string
+          organizacion_id: string
+          origen: string
+          recibido_en?: string
+          remitente?: string | null
+          revisado_en?: string | null
+          revisado_por?: string | null
+          subido_por?: string | null
+          tipo: string
+        }
+        Update: {
+          archivo_nombre?: string
+          archivo_ruta?: string
+          archivo_tipo?: string
+          asunto?: string | null
+          datos?: Json
+          estado?: string
+          huella?: string
+          id?: string
+          organizacion_id?: string
+          origen?: string
+          recibido_en?: string
+          remitente?: string | null
+          revisado_en?: string | null
+          revisado_por?: string | null
+          subido_por?: string | null
+          tipo?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "documentos_entrantes_organizacion_id_fkey"
             columns: ["organizacion_id"]
             isOneToOne: false
             referencedRelation: "organizaciones"
@@ -289,6 +363,17 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      aprobar_cierre: {
+        Args: {
+          p_banco?: number
+          p_documento: string
+          p_efectivo?: number
+          p_fecha: string
+          p_local: string
+          p_venta: number
+        }
+        Returns: string
+      }
       crear_organizacion: {
         Args: { p_local?: string; p_nombre: string }
         Returns: string

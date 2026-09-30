@@ -1,7 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // sharp tiene código nativo: no se empaqueta, se carga tal cual.
+  serverExternalPackages: ["sharp"],
 };
 
 export default nextConfig;

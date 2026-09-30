@@ -1,7 +1,8 @@
 "use server";
 
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { COOKIE_SESION_TEMPORAL } from "@/lib/supabase/cookies";
 import { crearClienteServidor } from "@/lib/supabase/server";
 
 export type EstadoLogin = { error?: string; mensaje?: string };
@@ -15,7 +16,11 @@ function leerCredenciales(formData: FormData) {
 
 export async function entrar(_: EstadoLogin, formData: FormData): Promise<EstadoLogin> {
   const { email, password } = leerCredenciales(formData);
-  const supabase = await crearClienteServidor();
+  const recordar = formData.get("recordar") === "on";
+  const almacen = await cookies();
+  if (recordar) almacen.delete(COOKIE_SESION_TEMPORAL);
+  else almacen.set(COOKIE_SESION_TEMPORAL, "1", { path: "/", sameSite: "lax", secure: true });
+  const supabase = await crearClienteServidor({ temporal: !recordar });
   const { error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) return { error: "Correo o contraseña incorrectos." };
   redirect("/negocios");
