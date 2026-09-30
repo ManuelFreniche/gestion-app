@@ -146,8 +146,7 @@ export function documentoDesdeRespuesta(entrada: unknown): DocumentoIA | null {
 
 // Gemini (Google AI Studio) tiene un plan gratuito y lee el PDF o la foto originales entera,
 // todas las páginas, sin que el navegador prepare nada.
-const MODELO_GEMINI = "gemini-flash-latest";
-const MODELO_GEMINI_RESPALDO = "gemini-2.5-flash";
+const MODELOS_GEMINI = ["gemini-flash-latest", "gemini-2.5-flash", "gemini-2.5-flash-lite"];
 const TIPOS_GEMINI = ["application/pdf", "image/jpeg", "image/png", "image/webp", "image/heic"];
 const MAX_BYTES_GEMINI = 14 * 1024 * 1024; // la petición admite 20 MB con el base64
 
@@ -165,6 +164,7 @@ async function conGemini(entrada: EntradaIA, clave: string, ms: number): Promise
     }`,
   });
 
+  const limite = Date.now() + ms;
   const llamar = async (modelo: string, sinPensar: boolean): Promise<Response> =>
     fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent`, {
       method: "POST",
@@ -178,16 +178,24 @@ async function conGemini(entrada: EntradaIA, clave: string, ms: number): Promise
           ...(sinPensar && { thinkingConfig: { thinkingBudget: 0 } }),
         },
       }),
-      signal: AbortSignal.timeout(ms),
+      signal: AbortSignal.timeout(Math.max(1000, limite - Date.now())),
     });
 
   try {
-    const modelo = process.env.GEMINI_MODELO || MODELO_GEMINI;
-    let respuesta = await llamar(modelo, true);
-    // Algunos modelos no admiten desactivar el razonamiento: se repite sin ese ajuste.
-    if (respuesta.status === 400) respuesta = await llamar(modelo, false);
-    // Si el nombre del modelo ya no existe, se prueba con el de respaldo.
-    if (respuesta.status === 404 && !process.env.GEMINI_MODELO) respuesta = await llamar(MODELO_GEMINI_RESPALDO, false);
+    // Google a veces responde "demasiada demanda" (503/429): se reintenta y se prueban otros modelos
+    // gratuitos antes de rendirse.
+    const modelos = process.env.GEMINI_MODELO ? [process.env.GEMINI_MODELO] : MODELOS_GEMINI;
+    let respuesta: Response | undefined;
+    for (let intento = 0; intento < modelos.length * 2; intento++) {
+      const modelo = modelos[intento % modelos.length];
+      respuesta = await llamar(modelo, true);
+      // Algunos modelos no admiten desactivar el razonamiento: se repite sin ese ajuste.
+      if (respuesta.status === 400) respuesta = await llamar(modelo, false);
+      const pasajero = [404, 429, 500, 502, 503, 504].includes(respuesta.status);
+      if (respuesta.ok || !pasajero || Date.now() > limite - 4000) break;
+      if (intento >= modelos.length - 1) await new Promise((r) => setTimeout(r, 1500));
+    }
+    if (!respuesta) return { documento: null, motivo: "No se pudo consultar a Gemini." };
     if (!respuesta.ok) return { documento: null, motivo: await motivoHttp("Gemini", respuesta) };
     const cuerpo = (await respuesta.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
     const texto = (cuerpo.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? "").join("");
