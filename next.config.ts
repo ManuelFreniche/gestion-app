@@ -5,11 +5,11 @@ const nextConfig: NextConfig = {
   serverExternalPackages: ["tesseract.js", "@napi-rs/canvas", "sharp"],
   // El OCR necesita el idioma y el motor a mano en el servidor de la bandeja.
   outputFileTracingIncludes: {
-    "/n/[org]/bandeja": [
-      "./node_modules/@tesseract.js-data/spa/4.0.0_best_int/**",
-      "./node_modules/tesseract.js/**",
-      "./node_modules/tesseract.js-core/**",
-      "./node_modules/@napi-rs/canvas*/**",
+    "/n/*/bandeja": [
+      "./node_modules/@tesseract.js-data/spa/4.0.0_best_int/**/*",
+      "./node_modules/tesseract.js/**/*",
+      "./node_modules/tesseract.js-core/**/*",
+      "./node_modules/@napi-rs/canvas*/**/*",
     ],
   },
 };
