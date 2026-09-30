@@ -28,14 +28,7 @@ export default async function PaginaNegocios({ searchParams }: PageProps<"/negoc
     <main className="mx-auto flex w-full max-w-lg flex-1 flex-col gap-6 p-4">
       <header className="flex items-center justify-between gap-3">
         <h1 className="text-xl font-semibold">{lista.length ? "Tus negocios" : "Da de alta tu negocio"}</h1>
-        {lista.length > 0 && <MenuNegocios actual="" negocios={[]} prefijo="lista-" soloAlta />}
-        {lista.length === 0 && (
-          <form action={salir}>
-            <Boton variante="fantasma" type="submit">
-              Salir
-            </Boton>
-          </form>
-        )}
+        {lista.length > 0 && <MenuNegocios />}
       </header>
       {lista.length > 0 ? (
         <ul className="flex flex-col gap-3">
@@ -55,6 +48,11 @@ export default async function PaginaNegocios({ searchParams }: PageProps<"/negoc
           <FormularioNegocio />
         </Tarjeta>
       )}
+      <form action={salir} className="mt-auto">
+        <Boton variante="fantasma" type="submit">
+          Cerrar sesión
+        </Boton>
+      </form>
     </main>
   );
 }

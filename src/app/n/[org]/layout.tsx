@@ -1,17 +1,12 @@
 import Link from "next/link";
 import { cargarNegocio } from "@/lib/negocio";
 import { modulosVisibles, NOMBRE_ROL } from "@/lib/permisos";
-import { crearClienteServidor } from "@/lib/supabase/server";
-import { MenuNegocios } from "@/app/negocios/menu";
 
 // Marco común de un negocio: cabecera y navegación con solo los módulos que el rol permite.
 // En el móvil la navegación va abajo, al alcance del pulgar.
 export default async function LayoutNegocio({ children, params }: LayoutProps<"/n/[org]">) {
   const { org } = await params;
   const negocio = await cargarNegocio(org);
-  const supabase = await crearClienteServidor();
-  const { data: filas } = await supabase.from("organizaciones").select("id, nombre").order("nombre");
-  const negocios = filas ?? [];
   const modulos = modulosVisibles(negocio.permisos, negocio.modulosActivos);
   const enlaces = [
     { href: `/n/${org}`, nombre: "Inicio" },
@@ -25,8 +20,7 @@ export default async function LayoutNegocio({ children, params }: LayoutProps<"/
         <Link href="/negocios?todos=1" className="mb-2 rounded-lg px-3 py-2 text-sm hover:bg-fondo">
           ← Mis negocios
         </Link>
-        <MenuNegocios actual={org} negocios={negocios} prefijo="escritorio-" />
-        <Link href={`/n/${org}`} className="mt-3 truncate font-semibold">
+        <Link href={`/n/${org}`} className="truncate font-semibold">
           {negocio.nombre}
         </Link>
         <p className="mb-4 text-xs text-texto-suave">{NOMBRE_ROL[negocio.rol]}</p>
@@ -46,7 +40,6 @@ export default async function LayoutNegocio({ children, params }: LayoutProps<"/
             {negocio.nombre}
           </Link>
         </div>
-        <MenuNegocios actual={org} negocios={negocios} prefijo="movil-" />
       </header>
 
       <main className="flex-1 p-4 pb-24 md:p-8">{children}</main>
