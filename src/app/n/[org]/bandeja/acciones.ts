@@ -63,13 +63,16 @@ export async function registrarDocumento(entrada: {
       // PDF sin texto legible: se prueba con OCR.
     }
   }
+  let errorOcr: string | undefined;
   if (!lectura) {
     try {
       const ocr = esPdf ? await textoDePdfEscaneado(bytes) : await textoDeImagen(bytes);
       textoLeido = textoLeido ? `${textoLeido}\n${ocr}` : ocr;
       lectura = leerTicketCierre(ocr);
-    } catch {
-      // Si el OCR falla, se sigue con la IA o a mano.
+    } catch (e) {
+      // Si el OCR falla, se sigue con la IA o a mano; el motivo se enseña en la tarjeta.
+      errorOcr = e instanceof Error ? e.message.replace(/\s+/g, " ").slice(0, 160) : "error desconocido";
+      console.error("OCR de la bandeja falló:", e);
     }
   }
   let motivoFallo: string | undefined;
@@ -80,7 +83,14 @@ export async function registrarDocumento(entrada: {
   }
   const avisoLectura = lectura
     ? undefined
-    : ["No se pudo leer solo: no reconozco el formato del ticket.", motivoFallo].filter(Boolean).join(" ");
+    : [
+        "No se pudo leer solo: no reconozco el formato del ticket.",
+        errorOcr && `El OCR falló: ${errorOcr}`,
+        !errorOcr && !textoLeido.trim() && "El OCR no encontró texto.",
+        motivoFallo,
+      ]
+        .filter(Boolean)
+        .join(" ");
 
   const datos: Record<string, string | number> = {};
   if (lectura) {
