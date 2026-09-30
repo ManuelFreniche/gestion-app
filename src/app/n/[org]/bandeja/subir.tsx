@@ -107,7 +107,7 @@ export function SubirTickets({ org, hoy, lectorDirecto }: { org: string; hoy: st
 
     let siguiente = 0;
     await Promise.all(
-      Array.from({ length: Math.min(A_LA_VEZ, archivos.length) }, async () => {
+      Array.from({ length: Math.min(lectorDirecto ? 1 : A_LA_VEZ, archivos.length) }, async () => {
         while (siguiente < archivos.length) {
           const indice = siguiente++;
           await leerUno(archivos[indice], indice);

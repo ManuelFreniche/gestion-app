@@ -199,6 +199,8 @@ async function conGemini(entrada: EntradaIA, clave: string, ms: number): Promise
       }
       if (!respuesta.ok) ultimoError = respuesta;
       if (respuesta.ok || ![429, 500, 502, 503, 504].includes(respuesta.status) || Date.now() > limite - 4000) break;
+      // Con 429 (límite gratuito agotado) insistir en el mismo modelo no sirve: solo se prueba el otro.
+      if (respuesta.status === 429) modelos.splice(modelos.indexOf(modelo), 1);
       await new Promise((r) => setTimeout(r, 1500));
     }
     if (!respuesta?.ok && ultimoError) respuesta = ultimoError;

@@ -56,7 +56,7 @@ export async function motivoHttp(proveedor: string, respuesta: Response): Promis
     const texto = await respuesta.text();
     const json = jsonDeTexto(texto) as { error?: { message?: string } | string; detail?: string; message?: string } | null;
     const bruto = typeof json?.error === "string" ? json.error : (json?.error?.message ?? json?.detail ?? json?.message ?? texto);
-    detalle = String(bruto).replace(/\s+/g, " ").slice(0, 120);
+    detalle = String(bruto).replace(/\s+/g, " ").slice(0, 200);
   } catch {
     // Sin detalle.
   }
