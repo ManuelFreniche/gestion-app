@@ -46,7 +46,7 @@ function Icono({ fase }: { fase: Fase }) {
 // Sube los documentos directamente a Storage (así no importa que pesen), los prepara en este
 // dispositivo y el servidor los lee. Se pueden soltar varios a la vez y cada uno muestra en qué
 // paso va. Lo leído aparece debajo para que tú decidas si se mete.
-export function SubirTickets({ org, hoy }: { org: string; hoy: string }) {
+export function SubirTickets({ org, hoy, lectorDirecto }: { org: string; hoy: string; lectorDirecto: boolean }) {
   const router = useRouter();
   const entrada = useRef<HTMLInputElement>(null);
   const [arrastrando, setArrastrando] = useState(false);
@@ -91,7 +91,7 @@ export function SubirTickets({ org, hoy }: { org: string; hoy: string }) {
           .then((r) => r.json() as Promise<ResultadoSubida>)
           .catch(() => ({ error: "Tardó demasiado en leerlo. Recarga la página: si se guardó, estará abajo." }));
 
-      const preparado = await conTiempo(prepararDocumento(archivo).catch(() => null), 30_000, null);
+      const preparado = await conTiempo(prepararDocumento(archivo, lectorDirecto).catch(() => null), 30_000, null);
       let resultado = await enviar(preparado ?? { texto: "", imagenes: [] });
       if (resultado.estado === "necesitaOcr") {
         // El servidor no tiene IA configurada: se lee con OCR gratuito en este dispositivo.

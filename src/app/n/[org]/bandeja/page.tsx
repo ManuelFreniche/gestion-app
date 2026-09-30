@@ -85,13 +85,13 @@ export default async function PaginaBandeja({ params }: PageProps<"/n/[org]/band
           <p className="text-base font-semibold text-peligro">Falta activar el lector inteligente</p>
           <p className="mt-1 text-base">
             Sin él solo leo bien los PDF con texto claro; las fotos y los escaneos no. Quien administra la web tiene que añadir la clave{" "}
-            <code className="rounded bg-fondo px-1">ANTHROPIC_API_KEY</code> en Vercel.
+            <code className="rounded bg-fondo px-1">GEMINI_API_KEY</code> en Vercel (es gratuita).
           </p>
         </Tarjeta>
       )}
 
       <Tarjeta>
-        <SubirTickets org={org} hoy={hoyEn(zona)} />
+        <SubirTickets org={org} hoy={hoyEn(zona)} lectorDirecto={Boolean(process.env.GEMINI_API_KEY)} />
       </Tarjeta>
 
       {documentos.length > 0 && <h2 className="text-2xl font-bold">Por revisar ({documentos.length})</h2>}

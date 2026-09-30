@@ -13,12 +13,16 @@ const MODELO_NVIDIA_VISION = "meta/llama-3.2-90b-vision-instruct";
 const MAX_FACTURAS = 30;
 const MAX_LINEAS = 80;
 
-export type EntradaIA = { texto: string; imagenes: string[] }; // imágenes: JPEG en base64
+export type EntradaIA = {
+  texto: string;
+  imagenes: string[]; // páginas como JPEG en base64
+  archivo?: { bytes: Uint8Array; tipo: string }; // el documento original, que Gemini lee entero
+};
 export type DocumentoIA = { tipo: "ticket_cierre" | "facturas" | "otro"; ticket: TicketCierre | null; facturas: FacturaDatos[] };
 export type LecturaDocumento = { documento: DocumentoIA | null; motivo?: string };
 
 export function hayIA(): boolean {
-  return Boolean(process.env.ANTHROPIC_API_KEY || process.env.NVIDIA_API_KEY);
+  return Boolean(process.env.GEMINI_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.NVIDIA_API_KEY);
 }
 
 const DESCRIPCION = `Esto es un documento de un negocio (una heladería/obrador) en España. Puede ser:
@@ -29,6 +33,8 @@ El documento puede tener VARIAS PÁGINAS: lee todas. Una factura puede ocupar va
 Para cada factura: proveedor (quien vende, NO el cliente; Alpino's / Manuel Freniche es el cliente), numero, fecha (aaaa-mm-dd), base_imponible, total (con IVA, el importe a pagar), categoria (Materia prima: alimentos y bebidas para vender o elaborar; Suministros: material, envases, limpieza, luz, agua; Alquiler; Nóminas; Otros) y lineas.
 Cada línea: descripcion (producto, corta), cantidad, unidad (ud, kg, l, caja…), precio_unitario (sin IVA, por unidad, como figura en la factura) e importe (de la línea, sin IVA).
 Importes como números con punto decimal. Si un dato no se ve con claridad, pon null. No inventes nada. Si no hay líneas legibles, deja lineas vacío.`;
+
+const FORMA_JSON = `Responde SOLO con un JSON con esta forma: {"tipo": "ticket_cierre"|"facturas"|"otro", "ticket": {"venta","efectivo","banco","fecha"}|null, "facturas": [{"proveedor","numero","fecha","base_imponible","total","categoria","lineas":[{"descripcion","cantidad","unidad","precio_unitario","importe"}]}]}`;
 
 const ESQUEMA = {
   type: "object",
@@ -137,6 +143,61 @@ export function documentoDesdeRespuesta(entrada: unknown): DocumentoIA | null {
   return { tipo, ticket: tipo === "ticket_cierre" ? ticket : null, facturas: tipo === "facturas" ? facturas : [] };
 }
 
+
+// Gemini (Google AI Studio) tiene un plan gratuito y lee el PDF o la foto originales entera,
+// todas las páginas, sin que el navegador prepare nada.
+const MODELO_GEMINI = "gemini-flash-latest";
+const MODELO_GEMINI_RESPALDO = "gemini-2.5-flash";
+const TIPOS_GEMINI = ["application/pdf", "image/jpeg", "image/png", "image/webp", "image/heic"];
+const MAX_BYTES_GEMINI = 14 * 1024 * 1024; // la petición admite 20 MB con el base64
+
+async function conGemini(entrada: EntradaIA, clave: string, ms: number): Promise<LecturaDocumento> {
+  const partes: unknown[] = [];
+  const { archivo } = entrada;
+  if (archivo && TIPOS_GEMINI.includes(archivo.tipo) && archivo.bytes.length <= MAX_BYTES_GEMINI) {
+    partes.push({ inline_data: { mime_type: archivo.tipo, data: Buffer.from(archivo.bytes).toString("base64") } });
+  } else if (entrada.imagenes.length > 0) {
+    for (const data of entrada.imagenes) partes.push({ inline_data: { mime_type: "image/jpeg", data } });
+  }
+  partes.push({
+    text: `${DESCRIPCION}\n\n${FORMA_JSON}${
+      partes.length === 0 && entrada.texto.trim() ? `\n\nTexto extraído del documento:\n"""\n${entrada.texto.slice(0, 30_000)}\n"""` : ""
+    }`,
+  });
+
+  const llamar = async (modelo: string, sinPensar: boolean): Promise<Response> =>
+    fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-goog-api-key": clave },
+      body: JSON.stringify({
+        contents: [{ parts: partes }],
+        generationConfig: {
+          temperature: 0,
+          maxOutputTokens: 16_000,
+          responseMimeType: "application/json",
+          ...(sinPensar && { thinkingConfig: { thinkingBudget: 0 } }),
+        },
+      }),
+      signal: AbortSignal.timeout(ms),
+    });
+
+  try {
+    const modelo = process.env.GEMINI_MODELO || MODELO_GEMINI;
+    let respuesta = await llamar(modelo, true);
+    // Algunos modelos no admiten desactivar el razonamiento: se repite sin ese ajuste.
+    if (respuesta.status === 400) respuesta = await llamar(modelo, false);
+    // Si el nombre del modelo ya no existe, se prueba con el de respaldo.
+    if (respuesta.status === 404 && !process.env.GEMINI_MODELO) respuesta = await llamar(MODELO_GEMINI_RESPALDO, false);
+    if (!respuesta.ok) return { documento: null, motivo: await motivoHttp("Gemini", respuesta) };
+    const cuerpo = (await respuesta.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
+    const texto = (cuerpo.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? "").join("");
+    const documento = documentoDesdeRespuesta(jsonDeTexto(texto));
+    return documento ? { documento } : { documento: null, motivo: "Gemini no devolvió datos legibles." };
+  } catch (e) {
+    return { documento: null, motivo: `No se pudo consultar a Gemini (${e instanceof Error ? e.message.slice(0, 80) : "error"}).` };
+  }
+}
+
 async function conClaude(entrada: EntradaIA, clave: string, ms: number): Promise<LecturaDocumento> {
   const contenido: unknown[] = entrada.imagenes.map((data) => ({
     type: "image",
@@ -174,7 +235,7 @@ async function conNvidia(entrada: EntradaIA, clave: string, ms: number): Promise
     const contenido: unknown[] = [
       {
         type: "text",
-        text: `${DESCRIPCION}\n\nResponde SOLO con un JSON con esta forma: {"tipo": "ticket_cierre"|"facturas"|"otro", "ticket": {"venta","efectivo","banco","fecha"}|null, "facturas": [{"proveedor","numero","fecha","base_imponible","total","categoria","lineas":[{"descripcion","cantidad","unidad","precio_unitario","importe"}]}]}${
+        text: `${DESCRIPCION}\n\n${FORMA_JSON}${
           entrada.texto.trim() ? `\n\nTexto extraído del documento:\n"""\n${entrada.texto.slice(0, 12_000)}\n"""` : ""
         }`,
       },
@@ -204,16 +265,20 @@ async function conNvidia(entrada: EntradaIA, clave: string, ms: number): Promise
   }
 }
 
-// Con clave de Claude se usa Claude (rápido y fiable con tablas); si no, NVIDIA.
+// Orden: Gemini (gratis), Claude (de pago) y NVIDIA (gratis pero solo para pruebas). Se usa el
+// primero con clave y, si no lee nada, el siguiente.
 export async function leerDocumentoConIA(entrada: EntradaIA, ms = 45_000): Promise<LecturaDocumento> {
-  const claude = process.env.ANTHROPIC_API_KEY;
-  const nvidia = process.env.NVIDIA_API_KEY;
-  if (!claude && !nvidia) return { documento: null };
-  if (claude) {
-    const lectura = await conClaude(entrada, claude, ms);
-    if (lectura.documento || !nvidia) return lectura;
-    const otra = await conNvidia(entrada, nvidia, ms);
-    return otra.documento ? otra : { documento: null, motivo: [lectura.motivo, otra.motivo].filter(Boolean).join(" ") };
+  const motivos: string[] = [];
+  const proveedores: [string | undefined, (e: EntradaIA, clave: string, ms: number) => Promise<LecturaDocumento>][] = [
+    [process.env.GEMINI_API_KEY, conGemini],
+    [process.env.ANTHROPIC_API_KEY, conClaude],
+    [process.env.NVIDIA_API_KEY, conNvidia],
+  ];
+  for (const [clave, leer] of proveedores) {
+    if (!clave) continue;
+    const lectura = await leer(entrada, clave, ms);
+    if (lectura.documento) return lectura;
+    if (lectura.motivo) motivos.push(lectura.motivo);
   }
-  return conNvidia(entrada, nvidia as string, ms);
+  return { documento: null, ...(motivos.length > 0 && { motivo: motivos.join(" ") }) };
 }

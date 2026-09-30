@@ -70,3 +70,62 @@ describe("facturaFiable", () => {
     expect(facturaFiable(base, "2026-07-01")).toBe(false);
   });
 });
+
+import { afterEach, beforeEach, vi } from "vitest";
+import { leerDocumentoConIA } from "../leer-documento-ia";
+
+describe("leerDocumentoConIA con Gemini", () => {
+  const claves = ["GEMINI_API_KEY", "ANTHROPIC_API_KEY", "NVIDIA_API_KEY", "GEMINI_MODELO"] as const;
+  beforeEach(() => {
+    for (const c of claves) delete process.env[c];
+    process.env.GEMINI_API_KEY = "clave-de-prueba";
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    for (const c of claves) delete process.env[c];
+  });
+
+  const respuestaGemini = (json: unknown) =>
+    new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(json) }] } }] }), { status: 200 });
+  const dosFacturas = {
+    tipo: "facturas",
+    ticket: null,
+    facturas: [
+      { proveedor: "Puleva", fecha: "2026-08-01", total: 22, base_imponible: 20, categoria: "Materia prima", lineas: [{ descripcion: "Leche", importe: 20 }] },
+      { proveedor: "Puleva", fecha: "2026-08-15", total: 11, categoria: "Materia prima", lineas: [] },
+    ],
+  };
+  const entrada = { texto: "", imagenes: [], archivo: { bytes: new Uint8Array([37, 80, 68, 70]), tipo: "application/pdf" } };
+
+  it("manda el PDF original y devuelve todas las facturas", async () => {
+    const fetchFalso = vi.fn().mockResolvedValue(respuestaGemini(dosFacturas));
+    vi.stubGlobal("fetch", fetchFalso);
+    const lectura = await leerDocumentoConIA(entrada);
+    expect(lectura.documento?.facturas).toHaveLength(2);
+    const [url, opciones] = fetchFalso.mock.calls[0];
+    expect(url).toContain("generativelanguage.googleapis.com");
+    expect(url).toContain("gemini-flash-latest");
+    expect((opciones.headers as Record<string, string>)["x-goog-api-key"]).toBe("clave-de-prueba");
+    const cuerpo = JSON.parse(opciones.body as string);
+    expect(cuerpo.contents[0].parts[0].inline_data.mime_type).toBe("application/pdf");
+  });
+
+  it("repite sin desactivar el razonamiento si da error 400", async () => {
+    const fetchFalso = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("{}", { status: 400 }))
+      .mockResolvedValueOnce(respuestaGemini(dosFacturas));
+    vi.stubGlobal("fetch", fetchFalso);
+    const lectura = await leerDocumentoConIA(entrada);
+    expect(lectura.documento?.facturas).toHaveLength(2);
+    expect(JSON.parse(fetchFalso.mock.calls[0][1].body as string).generationConfig.thinkingConfig).toBeDefined();
+    expect(JSON.parse(fetchFalso.mock.calls[1][1].body as string).generationConfig.thinkingConfig).toBeUndefined();
+  });
+
+  it("explica el motivo si la API falla", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: { message: "API key not valid" } }), { status: 403 })));
+    const lectura = await leerDocumentoConIA(entrada);
+    expect(lectura.documento).toBeNull();
+    expect(lectura.motivo).toContain("403");
+  });
+});

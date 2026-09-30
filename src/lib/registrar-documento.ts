@@ -92,8 +92,8 @@ export async function registrarDocumento(entrada: {
   let facturas: FacturaDatos[] = [];
   let motivoFallo: string | undefined;
   let lector: "ia" | "reglas" = "reglas";
-  if (!lectura && ia && (textoLeido.trim().length >= 30 || imagenes.length > 0)) {
-    const respuesta = await leerDocumentoConIA({ texto: textoLeido, imagenes });
+  if (!lectura && ia) {
+    const respuesta = await leerDocumentoConIA({ texto: textoLeido, imagenes, archivo: { bytes, tipo: tipoArchivo } });
     motivoFallo = respuesta.motivo;
     if (respuesta.documento?.ticket) lectura = respuesta.documento.ticket;
     else {
@@ -116,7 +116,7 @@ export async function registrarDocumento(entrada: {
   }
 
   const tipo = lectura ? "cierre" : facturas.length > 0 || textoLeido.trim() || imagenes.length > 0 ? "factura" : "cierre";
-  const sinIA = !ia && "El lector de IA no está activado (falta ANTHROPIC_API_KEY en Vercel): así solo leo bien PDFs con texto claro.";
+  const sinIA = !ia && "El lector inteligente no está activado (falta la clave GEMINI_API_KEY en Vercel): así solo leo bien PDFs con texto claro.";
   const aviso = lectura
     ? undefined
     : tipo === "factura"

@@ -101,8 +101,10 @@ function jpegBase64(lienzo: HTMLCanvasElement, calidad = 0.68): string {
   return lienzo.toDataURL("image/jpeg", calidad).split(",")[1] ?? "";
 }
 
-export async function prepararDocumento(archivo: File): Promise<DocumentoPreparado> {
+// Con `sinImagenes` (el servidor lee el archivo original) solo se extrae el texto del PDF.
+export async function prepararDocumento(archivo: File, sinImagenes = false): Promise<DocumentoPreparado> {
   if (archivo.type !== "application/pdf") {
+    if (sinImagenes) return { texto: "", imagenes: [] };
     const imagen = await createImageBitmap(archivo);
     const escala = Math.min(1, LADO_IA / Math.max(imagen.width, imagen.height));
     const lienzo = document.createElement("canvas");
@@ -126,7 +128,7 @@ export async function prepararDocumento(archivo: File): Promise<DocumentoPrepara
     textos.push(contenido.items.map((i) => ("str" in i ? i.str : "")).join("\n"));
   }
   const texto = textos.join("\n\n");
-  if (texto.replace(/\s/g, "").length >= MIN_TEXTO_IA) return { texto, imagenes: [], paginas: textos };
+  if (sinImagenes || texto.replace(/\s/g, "").length >= MIN_TEXTO_IA) return { texto, imagenes: [], paginas: textos };
 
   const imagenes: string[] = [];
   let total = 0;
