@@ -1,4 +1,5 @@
-import { euros, fechaLarga, hoyEn, leerImporte } from "./cierre";
+import { euros, fechaLarga, leerImporte } from "./cierre";
+import { diaACerrar, diaDeTrabajo } from "./horario-aviso";
 import type { crearClienteAdmin } from "./supabase/admin";
 import type { Database } from "./supabase/database.types";
 import type { ActualizacionTelegram, Teclado, Telegram } from "./telegram";
@@ -193,7 +194,7 @@ export async function manejarActualizacion(db: Db, tg: Telegram, u: Actualizacio
   if (!vinculo) return tg.enviar(chat.id, "Todavía no estás conectado. Abre la app, entra en Ventas y pulsa «Conectar Telegram».");
 
   if (/^\/cierre(?:@\w+)?$/i.test(texto)) {
-    return empezarCierre(db, tg, vinculo, hoyEn(await zonaDe(db, vinculo.organizacion_id), ahora));
+    return empezarCierre(db, tg, vinculo, diaDeTrabajo(await zonaDe(db, vinculo.organizacion_id), ahora));
   }
 
   const { data: conv } = await db.from("telegram_conversaciones").select("*").eq("chat_id", chat.id).maybeSingle();
@@ -214,15 +215,20 @@ export async function manejarActualizacion(db: Db, tg: Telegram, u: Actualizacio
   return tg.enviar(chat.id, "Escribe /cierre para hacer el cierre de hoy.");
 }
 
-// Lo lanza el cron cada noche: pregunta a cada chat conectado que todavía no haya hecho el cierre de hoy.
+// Lo lanza un programador cada pocos minutos: a cada chat conectado que todavía no haya hecho el cierre
+// del día le pregunta cuando llega su hora (ver horario-aviso.ts). Varias llamadas seguidas no repiten nada.
 export async function avisoNocturno(db: Db, tg: Telegram, ahora = new Date()): Promise<{ avisados: number; saltados: number }> {
   const { data: vinculos } = await db.from("telegram_vinculos").select("*");
   let avisados = 0;
   let saltados = 0;
   for (const vinculo of vinculos ?? []) {
-    const hoy = hoyEn(await zonaDe(db, vinculo.organizacion_id), ahora);
+    const hoy = diaACerrar(await zonaDe(db, vinculo.organizacion_id), ahora);
+    if (!hoy) {
+      saltados++; // todavía no es su hora
+      continue;
+    }
     const { data: conv } = await db.from("telegram_conversaciones").select("fecha").eq("chat_id", vinculo.chat_id).maybeSingle();
-    if (conv?.fecha === hoy) {
+    if (conv && conv.fecha >= hoy) {
       saltados++; // ya se le preguntó hoy (o ya lo hizo)
       continue;
     }

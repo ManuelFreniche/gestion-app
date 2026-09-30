@@ -153,6 +153,7 @@ describe("conectar con un código", () => {
 });
 
 describe("aviso nocturno", () => {
+  const horaDelAviso = new Date("2026-09-30T21:45:00Z"); // miércoles 23:45 en Madrid, pasada la hora de las 23:30
   it("pregunta una sola vez al día y no molesta si el cierre ya está completo", async () => {
     const { db } = baseFalsa({
       telegram_vinculos: [{ ...vinculo }, { ...vinculo, id: "v2", chat_id: 8, organizacion_id: "org-b", local_id: "local-b" }],
@@ -161,8 +162,17 @@ describe("aviso nocturno", () => {
       cierre_tandas: [{ cierre_id: "c2", organizacion_id: "org-b", sabor_id: "x" }],
     });
     const { tg, enviados } = telegramFalso();
-    expect(await avisoNocturno(db, tg, ahora)).toEqual({ avisados: 1, saltados: 1 });
+    expect(await avisoNocturno(db, tg, horaDelAviso)).toEqual({ avisados: 1, saltados: 1 });
     expect(enviados.map((e) => e.chat)).toEqual([7]);
-    expect(await avisoNocturno(db, tg, ahora)).toEqual({ avisados: 0, saltados: 2 });
+    expect(await avisoNocturno(db, tg, horaDelAviso)).toEqual({ avisados: 0, saltados: 2 });
+  });
+});
+
+describe("aviso nocturno: no avisa antes de su hora", () => {
+  it("a las 23:00 de un miércoles todavía no toca", async () => {
+    const { db } = baseFalsa({ telegram_vinculos: [{ ...vinculo }], sabores: sabores.map((s) => ({ ...s })) });
+    const { tg, enviados } = telegramFalso();
+    expect(await avisoNocturno(db, tg, ahora)).toEqual({ avisados: 0, saltados: 1 });
+    expect(enviados).toHaveLength(0);
   });
 });

@@ -1,0 +1,22 @@
+name: Aviso de Telegram
+
+# El plan gratuito de Vercel solo deja un cron al día y sin hora exacta, así que quien despierta al bot
+# es GitHub: cada 10 minutos entre las 21:00 y las 00:59 UTC (cubre de las 23:00 a las 02:00 en España).
+# La app decide si a alguien le toca preguntar según su horario (src/lib/horario-aviso.ts).
+on:
+  schedule:
+    - cron: "*/10 21-23,0 * * *"
+  workflow_dispatch:
+
+jobs:
+  avisar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Llamar al aviso
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then echo "Falta el secreto CRON_SECRET en GitHub: no se avisa."; exit 0; fi
+          curl --fail --silent --show-error --max-time 60 \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            https://gestion-app-nine.vercel.app/api/telegram/aviso

@@ -6,8 +6,8 @@ import { crearTelegram, tokenTelegram } from "@/lib/telegram";
 
 export const maxDuration = 60;
 
-// Lo llama el cron de Vercel cada noche (vercel.json). Vercel manda CRON_SECRET en la cabecera
-// Authorization; sin esa variable configurada, el aviso queda desactivado.
+// Lo llama un flujo de GitHub cada 10 minutos por la noche (.github/workflows/aviso-telegram.yml) con
+// CRON_SECRET en la cabecera Authorization; sin esa variable configurada, el aviso queda desactivado.
 export async function GET(peticion: Request) {
   const secreto = process.env.CRON_SECRET?.trim();
   const token = tokenTelegram();
