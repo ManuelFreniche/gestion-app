@@ -9,7 +9,7 @@ export const maxDuration = 60;
 // documentos en ese negocio; el buzón configurado solo sirve para el negocio indicado en el entorno.
 export async function POST(peticion: Request): Promise<NextResponse<ResultadoCorreo>> {
   const vacio = { nuevos: 0, repetidos: 0, sinLeer: 0, quedan: 0 };
-  const cuerpo = (await peticion.json().catch(() => ({}))) as { org?: unknown; desde?: unknown; hasta?: unknown };
+  const cuerpo = (await peticion.json().catch(() => ({}))) as { org?: unknown; desde?: unknown; hasta?: unknown; antesDe?: unknown };
   const org = typeof cuerpo.org === "string" ? cuerpo.org : "";
   const config = configCorreo();
   if (!config || config.organizacion !== org) {
@@ -25,5 +25,5 @@ export async function POST(peticion: Request): Promise<NextResponse<ResultadoCor
   if (pideTramo && !tramo) {
     return NextResponse.json({ ...vacio, error: "Las fechas no son válidas: la primera no puede ser posterior a la segunda y el tramo es de un año como máximo." }, { status: 400 });
   }
-  return NextResponse.json(await revisarCorreo(supabase, config, 40_000, tramo ?? undefined));
+  return NextResponse.json(await revisarCorreo(supabase, config, 40_000, tramo ?? undefined, typeof cuerpo.antesDe === "number" ? cuerpo.antesDe : undefined));
 }

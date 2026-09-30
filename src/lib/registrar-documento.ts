@@ -97,9 +97,18 @@ export async function registrarDocumento(entrada: {
   if (!lectura && ia) {
     const respuesta = await leerDocumentoConIA({ texto: textoLeido, imagenes, archivo: { bytes, tipo: tipoArchivo } });
     motivoFallo = respuesta.motivo;
+    if (!respuesta.documento && respuesta.transitorio) {
+      // El fallo es del proveedor (límite gratuito, saturación): no se guarda una lectura a medias.
+      // Sin guardar nada, un correo no se marca como leído y se vuelve a intentar más tarde.
+      await supabase.storage.from("documentos").remove([ruta]);
+      return {
+        error:
+          "El lector de Google no ha podido leerlo ahora mismo (límite gratuito agotado o saturado). No se ha guardado nada: vuelve a intentarlo en unos minutos.",
+      };
+    }
     if (respuesta.documento?.ticket) lectura = respuesta.documento.ticket;
-    else {
-      facturas = respuesta.documento?.facturas ?? [];
+    else if (respuesta.documento) {
+      facturas = respuesta.documento.facturas;
       lector = "ia";
     }
   }

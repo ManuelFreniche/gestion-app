@@ -30,12 +30,13 @@ export function RevisarCorreo({ org, hoy }: { org: string; hoy: string }) {
       setMensaje(tramo ? "Buscando facturas en ese tramo de tu correo…" : "Buscando facturas nuevas en tu correo…");
       let nuevos = 0;
       let sinLeer = 0;
+      let antesDe: number | undefined;
       try {
         for (let vuelta = 0; vuelta < (tramo ? VUELTAS_MAX_TRAMO : VUELTAS_MAX); vuelta++) {
           const respuesta = await fetch("/api/correo", {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ org, ...tramo }),
+            body: JSON.stringify({ org, ...tramo, antesDe }),
           });
           const r = (await respuesta.json()) as ResultadoCorreo;
           if (r.error) {
@@ -46,7 +47,8 @@ export function RevisarCorreo({ org, hoy }: { org: string; hoy: string }) {
           nuevos += r.nuevos;
           sinLeer += r.sinLeer;
           router.refresh();
-          if (r.quedan === 0) break;
+          if (r.quedan === 0 || !r.cursor) break;
+          antesDe = r.cursor;
           setMensaje(`Leyendo el correo… ${plural(nuevos, "documento nuevo", "documentos nuevos")} hasta ahora.`);
         }
         if (!tramo) {

@@ -65,6 +65,7 @@ export type ResultadoCorreo = {
   repetidos: number;
   sinLeer: number;
   quedan: number; // correos por mirar en la siguiente vuelta
+  cursor?: number; // desde dónde seguir en la siguiente vuelta (solo si quedan)
 };
 
 export type Tramo = { desde: string; hasta: string }; // aaaa-mm-dd, ambos incluidos
@@ -91,6 +92,7 @@ export async function revisarCorreo(
   config: ConfigCorreo,
   presupuestoMs = 40_000,
   tramo?: Tramo,
+  antesDe?: number,
 ): Promise<ResultadoCorreo> {
   const resultado: ResultadoCorreo = { nuevos: 0, repetidos: 0, sinLeer: 0, quedan: 0 };
   const limite = Date.now() + presupuestoMs;
@@ -123,12 +125,18 @@ export async function revisarCorreo(
     const fechas = tramo
       ? `after:${sumarDias(tramo.desde, -1).replaceAll("-", "/")} before:${sumarDias(tramo.hasta, 2).replaceAll("-", "/")}`
       : `newer_than:${config.dias}d`;
-    const consulta = `has:attachment ${fechas} -label:${ETIQUETA_LEIDO}${config.etiqueta ? ` label:${config.etiqueta}` : ""}`;
-    const uids = ((await cliente.search({ gmailraw: consulta }, { uid: true })) || []).sort((a, b) => b - a);
+    // Al buscar un tramo a propósito se vuelven a mirar también los correos ya revisados: lo que ya
+    // está guardado se ignora solo, y lo que no se pudo leer o se descartó vuelve a la Bandeja.
+    const consulta = `has:attachment ${fechas}${tramo ? "" : ` -label:${ETIQUETA_LEIDO}`}${config.etiqueta ? ` label:${config.etiqueta}` : ""}`;
+    const todos = ((await cliente.search({ gmailraw: consulta }, { uid: true })) || []).sort((a, b) => b - a);
+    // De más nuevo a más viejo; cada vuelta sigue donde acabó la anterior, así no se repite trabajo.
+    const uids = antesDe ? todos.filter((u) => u < antesDe) : todos;
     let hechos = 0;
+    let ultimo = 0;
     for (const uid of uids) {
       if (Date.now() > limite) break;
       hechos++;
+      ultimo = uid;
       const mensaje = await cliente.fetchOne(String(uid), { source: true }, { uid: true });
       if (!mensaje || !mensaje.source) continue;
       const analizado = await simpleParser(mensaje.source);
@@ -163,6 +171,7 @@ export async function revisarCorreo(
       if (completo) await cliente.messageFlagsAdd({ uid: String(uid) }, [ETIQUETA_LEIDO], { uid: true, useLabels: true });
     }
     resultado.quedan = uids.length - hechos;
+    if (resultado.quedan > 0) resultado.cursor = ultimo;
   } catch {
     return { ...resultado, error: "Se cortó la lectura del correo. Inténtalo de nuevo." };
   } finally {
