@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { Boton, Campo, Etiqueta } from "@/components/ui";
+import { leerTextoEnNavegador } from "@/lib/leer-en-navegador";
 import { crearClienteNavegador } from "@/lib/supabase/cliente";
 import { registrarDocumento, type ResultadoSubida } from "./acciones";
 
@@ -43,6 +44,11 @@ export function SubirTickets({ org, hoy }: { org: string; hoy: string }) {
         if (subida.error) {
           nuevos.push({ nombre: archivo.name, tono: "error", texto: "No se pudo subir. Inténtalo de nuevo." });
         } else {
+          // El documento se lee aquí, en el dispositivo: es mucho más rápido que hacerlo en el servidor.
+          const texto = await Promise.race([
+            leerTextoEnNavegador(archivo).catch(() => ""),
+            new Promise<string>((resolver) => setTimeout(() => resolver(""), 60_000)),
+          ]);
           const resultado: ResultadoSubida = await registrarDocumento({
             org,
             ruta,
@@ -50,6 +56,7 @@ export function SubirTickets({ org, hoy }: { org: string; hoy: string }) {
             tipoArchivo: archivo.type,
             // Con varios archivos no se puede saber a qué día corresponde cada uno.
             fecha: archivos.length === 1 ? fecha : undefined,
+            texto,
           }).catch(() => ({
             error: "Tardó demasiado en leerlo. Recarga la página: si se guardó, estará en la bandeja.",
           }));
@@ -97,7 +104,7 @@ export function SubirTickets({ org, hoy }: { org: string; hoy: string }) {
       >
         <p className="font-medium">
           {subiendo
-            ? `Leyendo ${Math.min(progreso.hecho + 1, progreso.total)} de ${progreso.total}… (puede tardar un poco)`
+            ? `Leyendo ${Math.min(progreso.hecho + 1, progreso.total)} de ${progreso.total}…`
             : arrastrando
               ? "Suéltalos aquí"
               : "Arrastra aquí los tickets"}
