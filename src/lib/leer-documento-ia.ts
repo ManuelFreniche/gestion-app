@@ -19,7 +19,10 @@ export type EntradaIA = {
   archivo?: { bytes: Uint8Array; tipo: string }; // el documento original, que Gemini lee entero
 };
 export type DocumentoIA = { tipo: "ticket_cierre" | "facturas" | "otro"; ticket: TicketCierre | null; facturas: FacturaDatos[] };
-export type LecturaDocumento = { documento: DocumentoIA | null; motivo?: string };
+// `transitorio`: el fallo es del proveedor (límite gratuito, saturación, red), no del documento.
+export type LecturaDocumento = { documento: DocumentoIA | null; motivo?: string; transitorio?: boolean };
+
+const esTransitorio = (motivo: string) => /respondió (429|500|502|503|504)|No se pudo consultar/.test(motivo);
 
 export function hayIA(): boolean {
   return Boolean(process.env.GEMINI_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.NVIDIA_API_KEY);
@@ -297,5 +300,8 @@ export async function leerDocumentoConIA(entrada: EntradaIA, ms = 45_000): Promi
     if (lectura.documento) return lectura;
     if (lectura.motivo) motivos.push(lectura.motivo);
   }
-  return { documento: null, ...(motivos.length > 0 && { motivo: motivos.join(" ") }) };
+  return {
+    documento: null,
+    ...(motivos.length > 0 && { motivo: motivos.join(" "), transitorio: motivos.every(esTransitorio) }),
+  };
 }

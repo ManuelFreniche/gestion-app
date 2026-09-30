@@ -22,6 +22,8 @@ export type DocumentoPendiente = {
     banco?: number;
   };
   facturas: FacturaDatos[];
+  // Quién leyó las facturas: la IA, o las reglas de texto (menos fiables con los importes).
+  lector?: "ia" | "reglas";
 };
 
 type Local = { id: string; nombre: string };
@@ -128,7 +130,7 @@ function TarjetaFactura({ org, documento, hoy }: { org: string; documento: Docum
         {leidas && (
           <ul className="flex flex-col gap-2">
             {facturas.map((f, i) => {
-              const cuadra = f.proveedor && f.fecha && f.importe && facturaFiable(f, hoy);
+              const cuadra = documento.lector === "ia" && f.proveedor && f.fecha && f.importe && facturaFiable(f, hoy);
               return (
                 <li key={i}>
                   <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-borde px-4 py-3">
@@ -151,7 +153,11 @@ function TarjetaFactura({ org, documento, hoy }: { org: string; documento: Docum
                         {f.lineas.length > 0 ? ` · ${f.lineas.length} productos` : ""}
                       </span>
                       <span className={`text-sm ${cuadra ? "text-exito" : "text-peligro"}`}>
-                        {cuadra ? "✓ Datos completos" : "Revisa los datos"}
+                        {cuadra
+                          ? "✓ Datos completos"
+                          : documento.lector === "ia"
+                            ? "Revisa los datos"
+                            : "Lectura básica: comprueba el importe en el documento"}
                       </span>
                     </span>
                     <span className="text-xl font-bold tabular-nums">{euros(leerImporte(importes[i]) ?? 0)}</span>

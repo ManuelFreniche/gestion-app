@@ -128,4 +128,14 @@ describe("leerDocumentoConIA con Gemini", () => {
     expect(lectura.documento).toBeNull();
     expect(lectura.motivo).toContain("403");
   });
+
+  it("marca como transitorio el límite gratuito agotado (429) y no el error de la clave", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => new Response(JSON.stringify({ error: { message: "quota" } }), { status: 429 })));
+    const limitado = await leerDocumentoConIA(entrada, 4000);
+    expect(limitado.documento).toBeNull();
+    expect(limitado.transitorio).toBe(true);
+
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("{}", { status: 403 })));
+    expect((await leerDocumentoConIA(entrada)).transitorio).toBe(false);
+  });
 });

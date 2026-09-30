@@ -44,6 +44,8 @@ export async function registrarDocumento(entrada: {
   imagenes?: string[];
   // El navegador ya ha probado el OCR local: no volver a pedirlo.
   ocrHecho?: boolean;
+  // De dónde viene el documento (por defecto, subido a mano).
+  origen?: "subida" | "correo";
 }): Promise<ResultadoSubida> {
   const { org, ruta, nombre, tipoArchivo } = entrada;
   if (!UUID.test(org) || !ruta.startsWith(`${org}/`)) {
@@ -95,9 +97,18 @@ export async function registrarDocumento(entrada: {
   if (!lectura && ia) {
     const respuesta = await leerDocumentoConIA({ texto: textoLeido, imagenes, archivo: { bytes, tipo: tipoArchivo } });
     motivoFallo = respuesta.motivo;
+    if (!respuesta.documento && respuesta.transitorio) {
+      // El fallo es del proveedor (límite gratuito, saturación): no se guarda una lectura a medias.
+      // Sin guardar nada, un correo no se marca como leído y se vuelve a intentar más tarde.
+      await supabase.storage.from("documentos").remove([ruta]);
+      return {
+        error:
+          "El lector de Google no ha podido leerlo ahora mismo (límite gratuito agotado o saturado). No se ha guardado nada: vuelve a intentarlo en unos minutos.",
+      };
+    }
     if (respuesta.documento?.ticket) lectura = respuesta.documento.ticket;
-    else {
-      facturas = respuesta.documento?.facturas ?? [];
+    else if (respuesta.documento) {
+      facturas = respuesta.documento.facturas;
       lector = "ia";
     }
   }
@@ -157,7 +168,7 @@ export async function registrarDocumento(entrada: {
   const { error } = await supabase.from("documentos_entrantes").insert({
     organizacion_id: org,
     tipo,
-    origen: "subida",
+    origen: entrada.origen ?? "subida",
     archivo_ruta: ruta,
     archivo_nombre: nombre.slice(0, 200),
     archivo_tipo: tipoArchivo,
