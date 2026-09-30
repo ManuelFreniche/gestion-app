@@ -77,8 +77,25 @@ export async function registrarDocumento(entrada: {
 
   if (error) {
     if (error.code === "23505") {
-      // Ya lo tenías (pendiente, metido o descartado): se ignora sin molestar y se borra la copia.
+      // La copia recién subida sobra: el original ya está guardado.
       await supabase.storage.from("documentos").remove([ruta]);
+      const { data: previo } = await supabase
+        .from("documentos_entrantes")
+        .select("id, estado")
+        .eq("organizacion_id", org)
+        .eq("huella", huella)
+        .maybeSingle();
+      // Si lo habías descartado, no se vuelve a descartar solo: vuelve a la bandeja para que decidas.
+      if (previo?.estado === "descartado") {
+        const { error: errorRecuperar } = await supabase
+          .from("documentos_entrantes")
+          .update({ estado: "pendiente", revisado_en: null, revisado_por: null })
+          .eq("id", previo.id);
+        if (!errorRecuperar) {
+          revalidatePath(`/n/${org}/bandeja`);
+          return { estado: "pendiente", detalle: "Lo habías descartado: lo he vuelto a poner en la bandeja." };
+        }
+      }
       return { estado: "repetido" };
     }
     if (error.code === "42501") return { error: "No tienes permiso para subir documentos." };

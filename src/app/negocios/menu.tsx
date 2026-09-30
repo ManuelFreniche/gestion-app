@@ -8,10 +8,12 @@ export function MenuNegocios({
   actual,
   negocios,
   prefijo,
+  soloAlta = false,
 }: {
   actual: string;
   negocios: { id: string; nombre: string }[];
   prefijo: string;
+  soloAlta?: boolean;
 }) {
   const otros = negocios.filter((n) => n.id !== actual);
   return (
@@ -32,11 +34,13 @@ export function MenuNegocios({
           </ul>
         )}
         <FormularioNegocio prefijo={prefijo} />
-        <form action={salir}>
-          <Boton variante="fantasma" type="submit" className="w-full">
-            Salir
-          </Boton>
-        </form>
+        {!soloAlta && (
+          <form action={salir}>
+            <Boton variante="fantasma" type="submit" className="w-full">
+              Salir
+            </Boton>
+          </form>
+        )}
       </div>
     </details>
   );

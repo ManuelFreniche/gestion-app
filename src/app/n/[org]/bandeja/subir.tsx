@@ -56,7 +56,7 @@ export function SubirTickets({ org, hoy }: { org: string; hoy: string }) {
             nuevos.push({ nombre: archivo.name, tono: "repetido", texto: "Ya lo tenías: lo he ignorado." });
           else if (resultado.estado === "metido")
             nuevos.push({ nombre: archivo.name, tono: "bien", texto: `Metido en el cierre · ${resultado.detalle}` });
-          else nuevos.push({ nombre: archivo.name, tono: "revisar", texto: "Falta revisarlo: míralo abajo." });
+          else nuevos.push({ nombre: archivo.name, tono: "revisar", texto: resultado.detalle ?? "Falta revisarlo: míralo abajo." });
         }
       }
       setProgreso({ hecho: indice + 1, total: archivos.length });

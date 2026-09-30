@@ -22,6 +22,9 @@ export default async function LayoutNegocio({ children, params }: LayoutProps<"/
   return (
     <div className="flex flex-1 flex-col md:flex-row">
       <aside className="hidden w-56 shrink-0 flex-col gap-1 border-r border-borde bg-superficie p-4 md:flex">
+        <Link href="/negocios?todos=1" className="mb-2 rounded-lg px-3 py-2 text-sm hover:bg-fondo">
+          ← Mis negocios
+        </Link>
         <MenuNegocios actual={org} negocios={negocios} prefijo="escritorio-" />
         <Link href={`/n/${org}`} className="mt-3 truncate font-semibold">
           {negocio.nombre}
@@ -35,9 +38,14 @@ export default async function LayoutNegocio({ children, params }: LayoutProps<"/
       </aside>
 
       <header className="flex items-center justify-between border-b border-borde bg-superficie px-4 py-3 md:hidden">
-        <Link href={`/n/${org}`} className="min-w-0 truncate font-semibold">
-          {negocio.nombre}
-        </Link>
+        <div className="flex min-w-0 items-center gap-1">
+          <Link href="/negocios?todos=1" aria-label="Mis negocios" className="rounded-lg px-3 py-2 text-lg hover:bg-fondo">
+            ←
+          </Link>
+          <Link href={`/n/${org}`} className="min-w-0 truncate font-semibold">
+            {negocio.nombre}
+          </Link>
+        </div>
         <MenuNegocios actual={org} negocios={negocios} prefijo="movil-" />
       </header>
 
