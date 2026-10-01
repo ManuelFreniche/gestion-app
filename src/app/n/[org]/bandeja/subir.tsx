@@ -81,7 +81,9 @@ export function SubirTickets({ org, hoy, lectorDirecto }: { org: string; hoy: st
       const subida = await supabase.storage.from("documentos").upload(ruta, archivo, { contentType: archivo.type });
       if (subida.error) {
         const pesaDemasiado = /exceed|maximum|too large|payload/i.test(subida.error.message);
-        return fin("error", pesaDemasiado ? demasiadoGrande(archivo) : "No se pudo subir. Inténtalo de nuevo.");
+        // Se enseña el motivo que da el almacén: así, si vuelve a fallar, se sabe por qué.
+        const motivo = subida.error.message.slice(0, 160);
+        return fin("error", pesaDemasiado ? demasiadoGrande(archivo) : `No se pudo subir (${motivo}). Inténtalo de nuevo.`);
       }
 
       cambiar(indice, { fase: "leyendo" });
