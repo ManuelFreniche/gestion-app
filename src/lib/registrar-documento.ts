@@ -3,7 +3,7 @@ import { revalidatePath } from "next/cache";
 import { extractText, getDocumentProxy } from "unpdf";
 import { esFecha, euros, fechaLarga, hoyEn } from "./cierre";
 import { facturaDesdeReglas, leerFactura, leerFacturasPorPaginas, type FacturaDatos } from "./factura";
-import { hayIA, leerDocumentoConIA } from "./leer-documento-ia";
+import { esModeloLigero, hayIA, leerDocumentoConIA } from "./leer-documento-ia";
 import { crearClienteServidor } from "./supabase/server";
 import { leerTicketCierre, type TicketCierre } from "./ticket-cierre";
 
@@ -96,9 +96,11 @@ export async function registrarDocumento(entrada: {
   let facturas: FacturaDatos[] = [];
   let motivoFallo: string | undefined;
   let lector: "ia" | "reglas" = "reglas";
+  let modeloLigero = false;
   if (!lectura && ia) {
     const respuesta = await leerDocumentoConIA({ texto: textoLeido, imagenes, archivo: { bytes, tipo: tipoArchivo } }, entrada.tiempoIaMs);
     motivoFallo = respuesta.motivo;
+    modeloLigero = esModeloLigero(respuesta.modelo);
     if (!respuesta.documento && respuesta.transitorio) {
       // El fallo es del proveedor (límite gratuito, saturación): no se guarda una lectura a medias.
       // Sin guardar nada, un correo no se marca como leído y se vuelve a intentar más tarde.
@@ -137,6 +139,8 @@ export async function registrarDocumento(entrada: {
           facturas.length > 0
             ? `Leída: ${plural(facturas.length, "factura", "facturas")} · total ${euros(facturas.reduce((t, f) => t + (f.importe ?? 0), 0))}. Revísala abajo y decide si la metes.`
             : "No he conseguido leer los datos: escríbelos mirando el documento.",
+          modeloLigero &&
+            "Se agotó el cupo gratuito del lector principal y la ha leído uno más sencillo: comprueba bien los importes antes de meterla.",
           sinIA,
           motivoFallo,
         ]

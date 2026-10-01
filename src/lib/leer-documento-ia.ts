@@ -20,7 +20,7 @@ export type EntradaIA = {
 };
 export type DocumentoIA = { tipo: "ticket_cierre" | "facturas" | "otro"; ticket: TicketCierre | null; facturas: FacturaDatos[] };
 // `transitorio`: el fallo es del proveedor (límite gratuito, saturación, red), no del documento.
-export type LecturaDocumento = { documento: DocumentoIA | null; motivo?: string; transitorio?: boolean };
+export type LecturaDocumento = { documento: DocumentoIA | null; motivo?: string; transitorio?: boolean; modelo?: string };
 
 const esTransitorio = (motivo: string) => /respondió (429|500|502|503|504)|No se pudo consultar/.test(motivo);
 
@@ -149,7 +149,30 @@ export function documentoDesdeRespuesta(entrada: unknown): DocumentoIA | null {
 
 // Gemini (Google AI Studio) tiene un plan gratuito y lee el PDF o la foto originales entera,
 // todas las páginas, sin que el navegador prepare nada.
-const MODELOS_GEMINI = ["gemini-flash-latest", "gemini-2.5-flash"];
+// Cada modelo tiene su propio cupo gratuito: si se agota uno, se prueba el siguiente. El último es
+// el más ligero y menos exacto: se avisa en la bandeja cuando es el que ha leído.
+const MODELOS_GEMINI = ["gemini-flash-latest", "gemini-2.5-flash", "gemini-2.5-flash-lite"];
+export const esModeloLigero = (modelo?: string) => Boolean(modelo && /lite/.test(modelo));
+
+// Qué cupo ha agotado Google: por minuto (basta esperar unos segundos), por día (hasta que
+// se renueve, a las 9:00 en España) o ninguno (el modelo no tiene cupo gratuito).
+export function analizar429(texto: string): { tipo: "minuto" | "dia" | "sin-cupo"; esperaMs?: number; detalle: string } {
+  let json: { error?: { message?: string; details?: { violations?: { quotaId?: string; quotaMetric?: string }[]; retryDelay?: string }[] } } = {};
+  try {
+    json = JSON.parse(texto);
+  } catch {
+    // Texto sin formato: se clasifica por su contenido.
+  }
+  const detalles = json.error?.details ?? [];
+  const ids = detalles.flatMap((d) => d.violations ?? []).map((v) => v.quotaId ?? v.quotaMetric ?? "");
+  const retraso = detalles.map((d) => d.retryDelay).find(Boolean);
+  const segundos = retraso ? Number.parseFloat(retraso) : NaN;
+  const detalle = ids.join(", ").slice(0, 160);
+  const mensaje = json.error?.message ?? texto;
+  if (/limit:\s*0\b/.test(mensaje)) return { tipo: "sin-cupo", detalle };
+  if (ids.some((i) => /PerDay/i.test(i))) return { tipo: "dia", detalle };
+  return { tipo: "minuto", esperaMs: Number.isFinite(segundos) ? Math.ceil(segundos * 1000) + 1000 : 20_000, detalle };
+}
 const TIPOS_GEMINI = ["application/pdf", "image/jpeg", "image/png", "image/webp", "image/heic"];
 const MAX_BYTES_GEMINI = 14 * 1024 * 1024; // la petición admite 20 MB con el base64
 
@@ -185,34 +208,47 @@ async function conGemini(entrada: EntradaIA, clave: string, ms: number): Promise
     });
 
   try {
-    // Google a veces responde "demasiada demanda" (503/429): se reintenta y se prueban otros modelos
-    // gratuitos antes de rendirse.
+    // Google a veces responde "demasiada demanda" (503) o agota el cupo gratuito (429): se espera lo
+    // que pida cuando es por minuto, y si es del día se pasa a otro modelo, que tiene su propio cupo.
     const modelos = process.env.GEMINI_MODELO ? [process.env.GEMINI_MODELO] : [...MODELOS_GEMINI];
     let respuesta: Response | undefined;
-    let ultimoError: Response | undefined; // el último fallo que no sea "modelo inexistente"
-    for (let intento = 0; intento < 6 && modelos.length > 0; intento++) {
-      const modelo = modelos[intento % modelos.length];
+    let motivo429: string | undefined;
+    let modeloUsado = modelos[0];
+    let esperas = 0;
+    for (let intento = 0; intento < 10 && modelos.length > 0; intento++) {
+      const modelo = modelos[0];
+      modeloUsado = modelo;
       respuesta = await llamar(modelo, true);
       // Algunos modelos no admiten desactivar el razonamiento: se repite sin ese ajuste.
       if (respuesta.status === 400) respuesta = await llamar(modelo, false);
+      if (respuesta.ok) break;
       if (respuesta.status === 404) {
-        // Ese modelo ya no existe o no está disponible: se quita de la rotación.
-        modelos.splice(modelos.indexOf(modelo), 1);
+        modelos.shift(); // ese modelo ya no existe
         continue;
       }
-      if (!respuesta.ok) ultimoError = respuesta;
-      if (respuesta.ok || ![429, 500, 502, 503, 504].includes(respuesta.status) || Date.now() > limite - 4000) break;
-      // Con 429 (límite gratuito agotado) insistir en el mismo modelo no sirve: solo se prueba el otro.
-      if (respuesta.status === 429) modelos.splice(modelos.indexOf(modelo), 1);
+      if (respuesta.status === 429) {
+        const analisis = analizar429(await respuesta.clone().text());
+        motivo429 = `${modelo}: cupo ${analisis.tipo === "dia" ? "del día" : analisis.tipo === "minuto" ? "por minuto" : "gratuito inexistente"}${analisis.detalle ? ` (${analisis.detalle})` : ""}`;
+        if (analisis.tipo === "minuto" && esperas < 3 && analisis.esperaMs !== undefined && Date.now() + analisis.esperaMs < limite - 20_000) {
+          esperas++;
+          await new Promise((r) => setTimeout(r, analisis.esperaMs));
+          continue;
+        }
+        modelos.shift(); // cupo agotado: se prueba el siguiente modelo
+        continue;
+      }
+      if (![500, 502, 503, 504].includes(respuesta.status) || Date.now() > limite - 4000) break;
       await new Promise((r) => setTimeout(r, 1500));
     }
-    if (!respuesta?.ok && ultimoError) respuesta = ultimoError;
     if (!respuesta) return { documento: null, motivo: "No se pudo consultar a Gemini." };
-    if (!respuesta.ok) return { documento: null, motivo: await motivoHttp("Gemini", respuesta) };
+    if (!respuesta.ok) {
+      const base = await motivoHttp("Gemini", respuesta);
+      return { documento: null, motivo: motivo429 ? `${base} Cupo gratuito agotado en todos los modelos. ${motivo429}.` : base };
+    }
     const cuerpo = (await respuesta.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
     const texto = (cuerpo.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? "").join("");
     const documento = documentoDesdeRespuesta(jsonDeTexto(texto));
-    return documento ? { documento } : { documento: null, motivo: "Gemini no devolvió datos legibles." };
+    return documento ? { documento, modelo: modeloUsado } : { documento: null, motivo: "Gemini no devolvió datos legibles." };
   } catch (e) {
     return { documento: null, motivo: `No se pudo consultar a Gemini (${e instanceof Error ? e.message.slice(0, 80) : "error"}).` };
   }
