@@ -175,9 +175,9 @@ export function SubirTickets({ org, hoy, lectorDirecto }: { org: string; hoy: st
           arrastrando ? "border-primario bg-primario/10" : "border-borde"
         }`}
       >
-        <p className="text-xl font-semibold">{arrastrando ? "Suéltalos aquí" : "Sube tus facturas o tickets"}</p>
+        <p className="text-xl font-semibold">{arrastrando ? "Suéltalos aquí" : "Sube lo que tengas"}</p>
         <p className="max-w-sm text-base text-texto-suave">
-          Elige los archivos (PDF o foto, todos los que quieras). Yo los leo y tú decides cuáles se meten.
+          Facturas, recibos, nóminas, tickets de gasolina, hojas de ingresos… PDF o foto, todos los que quieras. Yo los separo por tipo y tú decides qué se mete.
         </p>
         <Boton type="button" disabled={trabajando} onClick={() => entrada.current?.click()} className="mt-1 h-16 w-full max-w-xs text-lg">
           {trabajando ? "Leyendo…" : "Elegir archivos"}

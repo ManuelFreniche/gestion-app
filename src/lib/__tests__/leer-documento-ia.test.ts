@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { facturaFiable, type FacturaDatos } from "../factura";
-import { documentoDesdeRespuesta } from "../leer-documento-ia";
+import { documentoDesdeRespuesta, ingresosDesdeRespuesta } from "../leer-documento-ia";
 
 describe("documentoDesdeRespuesta", () => {
   it("lee varias facturas con sus líneas", () => {
@@ -137,5 +137,66 @@ describe("leerDocumentoConIA con Gemini", () => {
 
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("{}", { status: 403 })));
     expect((await leerDocumentoConIA(entrada)).transitorio).toBe(false);
+  });
+});
+
+describe("ingresos y gastos repartidos", () => {
+  it("lee una hoja de ingresos por días y la ordena", () => {
+    const d = documentoDesdeRespuesta({
+      tipo: "ingresos",
+      facturas: [],
+      ingresos: [
+        { fecha: "2026-09-02", venta: 310.5, efectivo: 100, banco: 210.5 },
+        { fecha: "2026-09-01", venta: 280 },
+      ],
+    });
+    expect(d?.tipo).toBe("ingresos");
+    expect(d?.ingresos).toEqual([
+      { fecha: "2026-09-01", venta: 280 },
+      { fecha: "2026-09-02", venta: 310.5, efectivo: 100, banco: 210.5 },
+    ]);
+  });
+
+  it("descarta filas sin fecha válida o sin importe", () => {
+    const r = ingresosDesdeRespuesta([
+      { fecha: "total", venta: 5000 },
+      { fecha: "2026-09-03", venta: 0 },
+      { fecha: "2026-09-04", venta: null },
+      { fecha: "2026-09-05", venta: 120 },
+    ]);
+    expect(r).toEqual([{ fecha: "2026-09-05", venta: 120 }]);
+  });
+
+  it("suma las filas de un mismo día y lo avisa", () => {
+    const r = ingresosDesdeRespuesta([
+      { fecha: "2026-09-01", venta: 100.1, efectivo: 40 },
+      { fecha: "2026-09-01", venta: 50.2, efectivo: 10 },
+    ]);
+    expect(r).toEqual([{ fecha: "2026-09-01", venta: 150.3, efectivo: 50, filas: 2 }]);
+  });
+
+  it("un archivo con facturas, una nómina y la hoja de ingresos es mixto", () => {
+    const d = documentoDesdeRespuesta({
+      tipo: "mixto",
+      facturas: [
+        { proveedor: "Inmobiliaria Sol", fecha: "2026-09-01", total: 650, categoria: "Alquiler", lineas: [] },
+        { proveedor: "Ana López", fecha: "2026-09-30", total: 1180.4, categoria: "Nóminas", lineas: [] },
+        { proveedor: "Gasolinera Cepsa", fecha: "2026-09-12", total: 45.3, categoria: "Gasolina", lineas: [] },
+      ],
+      ingresos: [{ fecha: "2026-09-01", venta: 280 }],
+    });
+    expect(d?.tipo).toBe("mixto");
+    expect(d?.facturas.map((f) => f.categoria)).toEqual(["Alquiler", "Nóminas", "Gasolina"]);
+    expect(d?.ingresos).toHaveLength(1);
+  });
+
+  it("un ticket de cierre no arrastra facturas ni ingresos", () => {
+    const d = documentoDesdeRespuesta({
+      tipo: "ticket_cierre",
+      ticket: { venta: 100, efectivo: 20, banco: 80, fecha: "2026-09-29" },
+      facturas: [],
+      ingresos: [{ fecha: "2026-09-01", venta: 5 }],
+    });
+    expect(d).toMatchObject({ tipo: "ticket_cierre", facturas: [], ingresos: [] });
   });
 });

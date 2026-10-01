@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { Tarjeta } from "@/components/ui";
 import { hoyEn } from "@/lib/cierre";
 import type { FacturaDatos } from "@/lib/factura";
-import { hayIA } from "@/lib/leer-documento-ia";
+import { hayIA, type IngresoDia } from "@/lib/leer-documento-ia";
 import { exigirPermiso } from "@/lib/negocio";
 import { crearClienteServidor } from "@/lib/supabase/server";
 import { faltanVariablesCorreo } from "@/lib/correo";
@@ -43,35 +43,70 @@ export default async function PaginaBandeja({ params }: PageProps<"/n/[org]/band
     : { data: [] };
   const urlDe = new Map((firmadas.data ?? []).map((f) => [f.path, f.signedUrl]));
 
+  // Lo que ya hay en Ventas para los días de las hojas de ingresos, para avisar de lo que se pisaría.
+  const diasHoja = filas.flatMap((f) => {
+    const ingresos = ((f.datos as { ingresos?: IngresoDia[] } | null)?.ingresos ?? []).map((d) => d.fecha);
+    return ingresos;
+  });
+  const existentes = new Map<string, number>();
+  if (diasHoja.length > 0) {
+    const ordenados = [...diasHoja].sort();
+    const { data } = await supabase
+      .from("cierres_diarios")
+      .select("fecha, venta")
+      .eq("organizacion_id", org)
+      .gte("fecha", ordenados[0])
+      .lte("fecha", ordenados[ordenados.length - 1]);
+    for (const c of data ?? []) existentes.set(c.fecha, (existentes.get(c.fecha) ?? 0) + Number(c.venta));
+  }
+
+  // Un mismo archivo puede traer facturas y gastos por un lado e ingresos por otro: cada parte
+  // pendiente es una tarjeta, y el archivo sale de la bandeja cuando se han decidido todas.
   const documentos: DocumentoPendiente[] = filas.flatMap((fila) => {
     const url = urlDe.get(fila.archivo_ruta);
     if (!url) return [];
     const datos = (fila.datos ?? {}) as Record<string, unknown>;
     const numero = (v: unknown) => (typeof v === "number" ? v : undefined);
-    return [
-      {
-        id: fila.id,
-        tipo: fila.tipo === "factura" ? "factura" : "cierre",
-        nombre: fila.archivo_nombre,
-        tipoArchivo: fila.archivo_tipo,
-        url,
-        recibido: new Intl.DateTimeFormat("es-ES", {
-          day: "numeric",
-          month: "short",
-          hour: "2-digit",
-          minute: "2-digit",
-          timeZone: zona,
-        }).format(new Date(fila.recibido_en)),
-        leido: {
-          fecha: typeof datos.fecha === "string" ? datos.fecha : undefined,
-          venta: numero(datos.venta),
-          efectivo: numero(datos.efectivo),
-          banco: numero(datos.banco),
-        },
-        facturas: Array.isArray(datos.facturas) ? (datos.facturas as FacturaDatos[]) : [],
-        lector: datos.lector === "ia" ? "ia" : "reglas",
+    const facturas = Array.isArray(datos.facturas) ? (datos.facturas as FacturaDatos[]) : [];
+    const ingresos = Array.isArray(datos.ingresos) ? (datos.ingresos as IngresoDia[]) : [];
+    const partes = (typeof datos.partes === "object" && datos.partes !== null ? datos.partes : {}) as Record<string, string>;
+    const comun = {
+      id: fila.id,
+      nombre: fila.archivo_nombre,
+      tipoArchivo: fila.archivo_tipo,
+      url,
+      recibido: new Intl.DateTimeFormat("es-ES", {
+        day: "numeric",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+        timeZone: zona,
+      }).format(new Date(fila.recibido_en)),
+      leido: {
+        fecha: typeof datos.fecha === "string" ? datos.fecha : undefined,
+        venta: numero(datos.venta),
+        efectivo: numero(datos.efectivo),
+        banco: numero(datos.banco),
       },
-    ];
+      facturas,
+      ingresos,
+      lector: (datos.lector === "ia" ? "ia" : "reglas") as "ia" | "reglas",
+    };
+    if (fila.tipo === "cierre") return [{ ...comun, clave: fila.id, tipo: "cierre" as const }];
+    const tarjetas: DocumentoPendiente[] = [];
+    // Sin nada leído se ofrece una factura en blanco para escribirla mirando el documento.
+    if ((facturas.length > 0 || ingresos.length === 0) && !partes.facturas) {
+      tarjetas.push({ ...comun, clave: `${fila.id}-facturas`, tipo: "factura" });
+    }
+    if (ingresos.length > 0 && !partes.ingresos) {
+      tarjetas.push({
+        ...comun,
+        clave: `${fila.id}-ingresos`,
+        tipo: "ingresos",
+        yaEnVentas: Object.fromEntries(ingresos.flatMap((d) => (existentes.has(d.fecha) ? [[d.fecha, existentes.get(d.fecha) as number]] : []))),
+      });
+    }
+    return tarjetas;
   });
 
   return (
@@ -79,7 +114,7 @@ export default async function PaginaBandeja({ params }: PageProps<"/n/[org]/band
       <div className="flex flex-col gap-1">
         <h1 className="text-3xl font-bold">Bandeja</h1>
         <p className="text-lg text-texto-suave">
-          Sube tus facturas y tickets. Yo los leo y te los enseño aquí: tú decides cuáles se meten.
+          Sube facturas, recibos, nóminas, tickets y hojas de ingresos, todo junto si quieres. Yo los leo, los separo por tipo y te los enseño aquí: tú decides cuáles se meten.
         </p>
       </div>
 
@@ -121,7 +156,7 @@ export default async function PaginaBandeja({ params }: PageProps<"/n/[org]/band
       ) : (
         documentos.map((documento) => (
           <TarjetaDocumento
-            key={documento.id}
+            key={documento.clave}
             org={org}
             documento={documento}
             locales={locales.data ?? []}

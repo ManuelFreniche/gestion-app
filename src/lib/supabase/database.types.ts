@@ -319,6 +319,47 @@ export type Database = {
           },
         ]
       }
+      gastos_varios: {
+        Row: {
+          categoria: string
+          concepto: string
+          creado_en: string
+          creado_por: string | null
+          fecha: string
+          id: string
+          importe: number
+          organizacion_id: string
+        }
+        Insert: {
+          categoria?: string
+          concepto: string
+          creado_en?: string
+          creado_por?: string | null
+          fecha: string
+          id?: string
+          importe: number
+          organizacion_id: string
+        }
+        Update: {
+          categoria?: string
+          concepto?: string
+          creado_en?: string
+          creado_por?: string | null
+          fecha?: string
+          id?: string
+          importe?: number
+          organizacion_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gastos_varios_organizacion_id_fkey"
+            columns: ["organizacion_id"]
+            isOneToOne: false
+            referencedRelation: "organizaciones"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       locales: {
         Row: {
           creado_en: string
@@ -629,6 +670,10 @@ export type Database = {
         }
         Returns: string
       }
+      cerrar_parte: {
+        Args: { p_documento: string; p_parte: string; p_resultado: string }
+        Returns: undefined
+      }
       crear_organizacion: {
         Args: { p_local?: string; p_nombre: string }
         Returns: string
@@ -647,6 +692,10 @@ export type Database = {
       mis_permisos: { Args: { p_organizacion: string }; Returns: string[] }
       registrar_facturas: {
         Args: { p_documento: string; p_facturas: Json }
+        Returns: number
+      }
+      registrar_ingresos: {
+        Args: { p_dias: Json; p_documento: string; p_local: string }
         Returns: number
       }
     }

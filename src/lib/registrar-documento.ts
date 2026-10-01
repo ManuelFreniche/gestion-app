@@ -3,7 +3,7 @@ import { revalidatePath } from "next/cache";
 import { extractText, getDocumentProxy } from "unpdf";
 import { esFecha, euros, fechaLarga, hoyEn } from "./cierre";
 import { facturaDesdeReglas, leerFactura, leerFacturasPorPaginas, type FacturaDatos } from "./factura";
-import { esModeloLigero, hayIA, leerDocumentoConIA } from "./leer-documento-ia";
+import { esModeloLigero, hayIA, leerDocumentoConIA, type IngresoDia } from "./leer-documento-ia";
 import { crearClienteServidor } from "./supabase/server";
 import { leerTicketCierre, type TicketCierre } from "./ticket-cierre";
 
@@ -70,10 +70,12 @@ export async function registrarDocumento(entrada: {
     .maybeSingle();
   const ia = hayIA();
   if (anterior) {
-    const d = (anterior.datos ?? {}) as { venta?: unknown; facturas?: unknown[]; lector?: unknown };
+    const d = (anterior.datos ?? {}) as { venta?: unknown; facturas?: unknown[]; ingresos?: unknown[]; lector?: unknown };
     // Una lectura hecha con reglas (sin IA) se repite si ahora hay IA: suele ser incompleta.
     const leido =
-      d.venta !== undefined || (Array.isArray(d.facturas) && d.facturas.length > 0 && (d.lector === "ia" || !ia));
+      d.venta !== undefined ||
+      (Array.isArray(d.ingresos) && d.ingresos.length > 0) ||
+      (Array.isArray(d.facturas) && d.facturas.length > 0 && (d.lector === "ia" || !ia));
     if (anterior.estado === "aprobado" || (anterior.estado === "pendiente" && leido)) {
       await supabase.storage.from("documentos").remove([ruta]);
       return { estado: "repetido" };
@@ -94,6 +96,7 @@ export async function registrarDocumento(entrada: {
   }
 
   let facturas: FacturaDatos[] = [];
+  let ingresos: IngresoDia[] = [];
   let motivoFallo: string | undefined;
   let lector: "ia" | "reglas" = "reglas";
   let modeloLigero = false;
@@ -113,11 +116,12 @@ export async function registrarDocumento(entrada: {
     if (respuesta.documento?.ticket) lectura = respuesta.documento.ticket;
     else if (respuesta.documento) {
       facturas = respuesta.documento.facturas;
+      ingresos = respuesta.documento.ingresos;
       lector = "ia";
     }
   }
   // Sin IA (o si no ha sacado nada): reglas de texto, separando las facturas por páginas.
-  if (!lectura && facturas.length === 0 && textoLeido.trim()) {
+  if (!lectura && facturas.length === 0 && ingresos.length === 0 && textoLeido.trim()) {
     const porPaginas = leerFacturasPorPaginas(entrada.paginas ?? []);
     const reglas = porPaginas.length === 0 ? leerFactura(textoLeido) : null;
     if (porPaginas.length > 0) facturas = porPaginas;
@@ -125,19 +129,32 @@ export async function registrarDocumento(entrada: {
   }
 
   // Sin IA y sin texto (foto o PDF escaneado): el navegador debe hacer antes el OCR local.
-  if (!lectura && facturas.length === 0 && !ia && !textoLeido.trim() && !entrada.ocrHecho) {
+  if (!lectura && facturas.length === 0 && ingresos.length === 0 && !ia && !textoLeido.trim() && !entrada.ocrHecho) {
     await supabase.storage.from("documentos").remove([ruta]);
     return { estado: "necesitaOcr" };
   }
 
-  const tipo = lectura ? "cierre" : facturas.length > 0 || textoLeido.trim() || imagenes.length > 0 ? "factura" : "cierre";
+  const soloIngresos = ingresos.length > 0 && facturas.length === 0;
+  const tipo = lectura
+    ? "cierre"
+    : soloIngresos
+      ? "ingresos"
+      : facturas.length > 0 || textoLeido.trim() || imagenes.length > 0
+        ? "factura"
+        : "cierre";
   const sinIA = !ia && "El lector inteligente no está activado (falta la clave GEMINI_API_KEY en Vercel): así solo leo bien PDFs con texto claro.";
+  const resumenIngresos =
+    ingresos.length > 0 &&
+    `${plural(ingresos.length, "día de ingresos", "días de ingresos")} · total ${euros(ingresos.reduce((t, d) => t + d.venta, 0))}.`;
   const aviso = lectura
     ? undefined
-    : tipo === "factura"
+    : tipo === "factura" || tipo === "ingresos"
       ? [
-          facturas.length > 0
-            ? `Leída: ${plural(facturas.length, "factura", "facturas")} · total ${euros(facturas.reduce((t, f) => t + (f.importe ?? 0), 0))}. Revísala abajo y decide si la metes.`
+          facturas.length > 0 &&
+            `Leída: ${plural(facturas.length, "factura o gasto", "facturas o gastos")} · total ${euros(facturas.reduce((t, f) => t + (f.importe ?? 0), 0))}.`,
+          resumenIngresos,
+          tipo === "ingresos" || facturas.length > 0
+            ? "Revísalo abajo y decide qué se mete."
             : "No he conseguido leer los datos: escríbelos mirando el documento.",
           modeloLigero &&
             "Se agotó el cupo gratuito del lector principal y la ha leído uno más sencillo: comprueba bien los importes antes de meterla.",
@@ -161,8 +178,9 @@ export async function registrarDocumento(entrada: {
     if (lectura.efectivo !== null) datos.efectivo = lectura.efectivo;
     if (lectura.banco !== null) datos.banco = lectura.banco;
     if (lectura.fecha) datos.fecha = lectura.fecha;
-  } else if (tipo === "factura" && facturas.length > 0) {
-    datos.facturas = facturas;
+  } else if (facturas.length > 0 || ingresos.length > 0) {
+    if (facturas.length > 0) datos.facturas = facturas;
+    if (ingresos.length > 0) datos.ingresos = ingresos;
     datos.lector = lector;
   } else if (textoLeido.trim()) {
     // Para poder ver qué texto se leyó cuando el formato no se reconoce.
