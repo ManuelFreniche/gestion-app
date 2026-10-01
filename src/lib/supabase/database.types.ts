@@ -463,6 +463,145 @@ export type Database = {
           },
         ]
       }
+      telegram_codigos: {
+        Row: {
+          caduca: string
+          codigo: string
+          creado_por: string | null
+          local_id: string
+          organizacion_id: string
+        }
+        Insert: {
+          caduca?: string
+          codigo: string
+          creado_por?: string | null
+          local_id: string
+          organizacion_id: string
+        }
+        Update: {
+          caduca?: string
+          codigo?: string
+          creado_por?: string | null
+          local_id?: string
+          organizacion_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "telegram_codigos_local_id_organizacion_id_fkey"
+            columns: ["local_id", "organizacion_id"]
+            isOneToOne: false
+            referencedRelation: "locales"
+            referencedColumns: ["id", "organizacion_id"]
+          },
+          {
+            foreignKeyName: "telegram_codigos_organizacion_id_fkey"
+            columns: ["organizacion_id"]
+            isOneToOne: false
+            referencedRelation: "organizaciones"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      telegram_conversaciones: {
+        Row: {
+          actualizado_en: string
+          chat_id: number
+          fecha: string
+          local_id: string
+          organizacion_id: string
+          paso: string
+          sabores: Json
+          seleccion: number[]
+          venta: number | null
+        }
+        Insert: {
+          actualizado_en?: string
+          chat_id: number
+          fecha: string
+          local_id: string
+          organizacion_id: string
+          paso: string
+          sabores?: Json
+          seleccion?: number[]
+          venta?: number | null
+        }
+        Update: {
+          actualizado_en?: string
+          chat_id?: number
+          fecha?: string
+          local_id?: string
+          organizacion_id?: string
+          paso?: string
+          sabores?: Json
+          seleccion?: number[]
+          venta?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "telegram_conversaciones_chat_id_fkey"
+            columns: ["chat_id"]
+            isOneToOne: true
+            referencedRelation: "telegram_vinculos"
+            referencedColumns: ["chat_id"]
+          },
+          {
+            foreignKeyName: "telegram_conversaciones_local_id_organizacion_id_fkey"
+            columns: ["local_id", "organizacion_id"]
+            isOneToOne: false
+            referencedRelation: "locales"
+            referencedColumns: ["id", "organizacion_id"]
+          },
+          {
+            foreignKeyName: "telegram_conversaciones_organizacion_id_fkey"
+            columns: ["organizacion_id"]
+            isOneToOne: false
+            referencedRelation: "organizaciones"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      telegram_vinculos: {
+        Row: {
+          chat_id: number
+          creado_en: string
+          id: string
+          local_id: string
+          nombre: string | null
+          organizacion_id: string
+        }
+        Insert: {
+          chat_id: number
+          creado_en?: string
+          id?: string
+          local_id: string
+          nombre?: string | null
+          organizacion_id: string
+        }
+        Update: {
+          chat_id?: number
+          creado_en?: string
+          id?: string
+          local_id?: string
+          nombre?: string | null
+          organizacion_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "telegram_vinculos_local_id_organizacion_id_fkey"
+            columns: ["local_id", "organizacion_id"]
+            isOneToOne: false
+            referencedRelation: "locales"
+            referencedColumns: ["id", "organizacion_id"]
+          },
+          {
+            foreignKeyName: "telegram_vinculos_organizacion_id_fkey"
+            columns: ["organizacion_id"]
+            isOneToOne: false
+            referencedRelation: "organizaciones"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
