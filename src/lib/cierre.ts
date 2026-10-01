@@ -22,6 +22,15 @@ export function leerImporte(texto: string): number | null {
   return Number(normalizado);
 }
 
+// Como `leerImporte`, pero admite un "-" delante (facturas de abono, que restan).
+export function leerImporteConSigno(texto: string): number | null {
+  const limpio = texto.trim();
+  const negativo = /^[-−–]/.test(limpio);
+  const valor = leerImporte(negativo ? limpio.slice(1) : limpio);
+  if (valor === null) return null;
+  return negativo && valor !== 0 ? -valor : valor;
+}
+
 // Fecha de hoy (aaaa-mm-dd) en la zona horaria del negocio.
 export function hoyEn(zona: string, ahora = new Date()): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: zona }).format(ahora);

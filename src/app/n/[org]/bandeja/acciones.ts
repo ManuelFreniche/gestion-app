@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { esFecha, hoyEn, leerImporte } from "@/lib/cierre";
+import { esFecha, hoyEn, leerImporte, leerImporteConSigno } from "@/lib/cierre";
 import { CATEGORIAS, type FacturaDatos } from "@/lib/factura";
 import { crearClienteServidor } from "@/lib/supabase/server";
 
@@ -80,13 +80,13 @@ export async function aprobarFacturas(_: EstadoBandeja, formData: FormData): Pro
     if (formData.get(`incluir_${i}`) !== "on") continue;
     const proveedor = String(formData.get(`proveedor_${i}`) ?? "").trim();
     const fecha = String(formData.get(`fecha_${i}`) ?? "");
-    const importe = leerImporte(String(formData.get(`importe_${i}`) ?? ""));
+    const importe = leerImporteConSigno(String(formData.get(`importe_${i}`) ?? ""));
     const categoria = String(formData.get(`categoria_${i}`) ?? "");
     const numero = String(formData.get(`numero_${i}`) ?? "").trim();
     const etiqueta = cantidad > 1 ? ` (factura ${i + 1})` : "";
     if (!proveedor || proveedor.length > 120) return { error: `Escribe el proveedor${etiqueta}.` };
     if (!esFecha(fecha)) return { error: `Escribe la fecha${etiqueta}.` };
-    if (importe === null) return { error: `Escribe el importe total${etiqueta}, por ejemplo 121,00.` };
+    if (importe === null || importe === 0) return { error: `Escribe el importe total${etiqueta}, por ejemplo 121,00 (en un abono, con un - delante).` };
     if (!(CATEGORIAS as readonly string[]).includes(categoria)) return { error: `Elige una categoría${etiqueta}.` };
     if (numero.length > 60) return { error: `El número de factura es demasiado largo${etiqueta}.` };
     facturas.push({ proveedor, fecha, importe, categoria, numero, lineas: leidas[i]?.lineas ?? [] });

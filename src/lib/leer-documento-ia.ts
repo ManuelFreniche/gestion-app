@@ -51,6 +51,7 @@ Si el archivo mezcla cosas (por ejemplo facturas, una nómina y la hoja de ingre
 El documento puede tener VARIAS PÁGINAS: lee todas. Una factura puede ocupar varias páginas (entonces es una sola entrada, con un solo total), y una página puede traer una factura entera. Nunca dejes documentos sin devolver ni mezcles dos en una entrada.
 Para cada factura o gasto: proveedor (quien vende o cobra, NO el cliente; Alpino's / Manuel Freniche es el cliente), numero, fecha (aaaa-mm-dd), base_imponible, total (con IVA, el importe a pagar), categoria (Materia prima: alimentos y bebidas para vender o elaborar; Suministros: material, envases, limpieza, luz, agua; Alquiler; Nóminas; Gasolina; Otros) y lineas.
 Cada línea: descripcion (producto, corta), cantidad, unidad (ud, kg, l, caja…), precio_unitario (sin IVA, por unidad, como figura en la factura) e importe (de la línea, sin IVA).
+Si un documento es una factura de ABONO, rectificativa o nota de crédito (devuelve dinero), pon en NEGATIVO su total, su base y los importes de sus líneas (precio_unitario siempre positivo).
 Importes como números con punto decimal. Si un dato no se ve con claridad, pon null. No inventes nada. Si no hay líneas legibles, deja lineas vacío.`;
 
 const FORMA_JSON = `Responde SOLO con un JSON con esta forma: {"tipo": "ticket_cierre"|"facturas"|"ingresos"|"mixto"|"otro", "ticket": {"venta","efectivo","banco","fecha"}|null, "facturas": [{"proveedor","numero","fecha","base_imponible","total","categoria","lineas":[{"descripcion","cantidad","unidad","precio_unitario","importe"}]}], "ingresos": [{"fecha","venta","efectivo","banco"}]}`;
@@ -121,6 +122,12 @@ const dinero = (v: unknown) => {
   const n = numero(v);
   return n === undefined ? undefined : Math.round(n * 100) / 100;
 };
+// Importe de una factura o de sus líneas: en un abono sale negativo.
+const dineroConSigno = (v: unknown) => {
+  if (typeof v !== "number" || v >= 0) return dinero(v);
+  const n = dinero(-v);
+  return n === undefined ? undefined : -n;
+};
 function texto(v: unknown, max: number): string | undefined {
   if (typeof v !== "string") return undefined;
   const t = v.replace(/\s+/g, " ").trim().slice(0, max);
@@ -171,7 +178,7 @@ export function documentoDesdeRespuesta(entrada: unknown): DocumentoIA | null {
       if (typeof l !== "object" || l === null) continue;
       const fila = l as Record<string, unknown>;
       const descripcion = texto(fila.descripcion, 200);
-      const importe = dinero(fila.importe);
+      const importe = dineroConSigno(fila.importe);
       if (!descripcion || importe === undefined) continue;
       const cantidad = numero(fila.cantidad, 1_000_000_000);
       const unidad = texto(fila.unidad, 20);
@@ -187,8 +194,8 @@ export function documentoDesdeRespuesta(entrada: unknown): DocumentoIA | null {
     const proveedor = texto(f.proveedor, 120);
     const numeroFactura = texto(f.numero, 60);
     const fecha = typeof f.fecha === "string" && esFecha(f.fecha) ? f.fecha : undefined;
-    const total = dinero(f.total);
-    const base = dinero(f.base_imponible);
+    const total = dineroConSigno(f.total);
+    const base = dineroConSigno(f.base_imponible);
     if (!proveedor && total === undefined && lineas.length === 0) continue;
     const categoria = (CATEGORIAS as readonly string[]).includes(String(f.categoria)) ? (f.categoria as Categoria) : "Otros";
     facturas.push({

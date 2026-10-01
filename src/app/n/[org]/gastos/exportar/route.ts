@@ -36,7 +36,7 @@ export async function GET(peticion: Request, { params }: RouteContext<"/n/[org]/
     cierres.data ? cierres.data.map((c) => ({ ...c, venta: Number(c.venta), efectivo: c.efectivo === null ? null : Number(c.efectivo), banco: c.banco === null ? null : Number(c.banco) })) : null,
   );
   const archivo = await crearLibro(mes, negocio.nombre, datos);
-  const nombre = `${negocio.nombre}-${mes}.xlsx`.normalize("NFD").replace(/[^\w.-]+/g, "-").replace(/-+/g, "-");
+  const nombre = `${negocio.nombre}-${mes}.xlsx`.normalize("NFD").replace(/\p{M}/gu, "").replace(/[^\w.-]+/g, "-").replace(/-+/g, "-");
   return new Response(new Uint8Array(archivo), {
     headers: {
       "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

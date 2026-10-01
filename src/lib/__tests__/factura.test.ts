@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detectarFecha, detectarTotal, leerFactura, leerFacturasPorPaginas, limpiarImporte } from "../factura";
+import { claveFactura, detectarFecha, detectarTotal, leerFactura, leerFacturasPorPaginas, limpiarImporte } from "../factura";
 
 describe("limpiarImporte", () => {
   it("entiende los formatos habituales", () => {
@@ -80,5 +80,18 @@ describe("leerFacturasPorPaginas", () => {
   it("ignora páginas de continuación y repetidas", () => {
     const f = leerFacturasPorPaginas([pagina("1329754", ""), "Condiciones generales de venta y protección de datos personales del proveedor.", pagina("1329754", "")]);
     expect(f).toHaveLength(1);
+  });
+});
+
+describe("claveFactura", () => {
+  it("junta mayúsculas y espacios del proveedor", () => {
+    expect(claveFactura({ proveedor: " Sercodi  S.L. ", numero: "A-1", fecha: "2026-09-01" })).toBe(
+      claveFactura({ proveedor: "sercodi s.l.", numero: "a-1", fecha: "2026-09-01" }),
+    );
+  });
+  it("sin proveedor, número o fecha no hay clave", () => {
+    expect(claveFactura({ proveedor: "X", numero: "1" })).toBeNull();
+    expect(claveFactura({ proveedor: "X", fecha: "2026-09-01" })).toBeNull();
+    expect(claveFactura({ numero: "1", fecha: "2026-09-01" })).toBeNull();
   });
 });

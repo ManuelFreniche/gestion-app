@@ -6,6 +6,26 @@ import { cambiosDePrecio, resultadoPorMes, ultimosMeses } from "@/lib/margenes";
 import { exigirPermiso } from "@/lib/negocio";
 import { crearClienteServidor } from "@/lib/supabase/server";
 
+type Cliente = Awaited<ReturnType<typeof crearClienteServidor>>;
+
+// Supabase devuelve como mucho 1000 filas por consulta: se pide por páginas para no perder compras.
+async function leerLineas(supabase: Cliente, org: string, desde: string) {
+  const filas = [];
+  for (let pagina = 0; pagina < 20; pagina++) {
+    const { data, error } = await supabase
+      .from("facturas_lineas")
+      .select("id, descripcion, unidad, cantidad, precio_unitario, importe, facturas_recibidas!inner(fecha, proveedor)")
+      .eq("organizacion_id", org)
+      .gte("facturas_recibidas.fecha", desde)
+      .order("id")
+      .range(pagina * 1000, pagina * 1000 + 999);
+    if (error) return null;
+    filas.push(...data);
+    if (data.length < 1000) break;
+  }
+  return filas;
+}
+
 // Sin escribir nada: cuánto queda cada mes (ventas menos gastos) y qué productos han cambiado de
 // precio entre las dos últimas compras. Todo sale de lo que ya se aceptó en la Bandeja.
 export default async function PaginaMargenes({ params }: PageProps<"/n/[org]/margenes">) {
@@ -29,14 +49,7 @@ export default async function PaginaMargenes({ params }: PageProps<"/n/[org]/mar
     verFacturas
       ? supabase.from("facturas_recibidas").select("fecha, importe").eq("organizacion_id", org).gte("fecha", desde).lt("fecha", hasta)
       : Promise.resolve({ data: null }),
-    verFacturas
-      ? supabase
-          .from("facturas_lineas")
-          .select("descripcion, unidad, cantidad, precio_unitario, importe, facturas_recibidas!inner(fecha, proveedor)")
-          .eq("organizacion_id", org)
-          .gte("facturas_recibidas.fecha", sumarDias(hoy, -365))
-          .limit(5000)
-      : Promise.resolve({ data: null }),
+    verFacturas ? leerLineas(supabase, org, sumarDias(hoy, -365)) : Promise.resolve(null),
   ]);
 
   const porMes =
@@ -47,9 +60,9 @@ export default async function PaginaMargenes({ params }: PageProps<"/n/[org]/mar
           facturas.data.map((f) => ({ fecha: f.fecha, importe: Number(f.importe) })),
         )
       : null;
-  const cambios = lineas.data
+  const cambios = lineas
     ? cambiosDePrecio(
-        lineas.data.map((l) => ({
+        lineas.map((l) => ({
           descripcion: l.descripcion,
           unidad: l.unidad,
           cantidad: l.cantidad === null ? null : Number(l.cantidad),
