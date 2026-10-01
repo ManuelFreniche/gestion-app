@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { Tarjeta } from "@/components/ui";
 import { hoyEn } from "@/lib/cierre";
-import type { FacturaDatos } from "@/lib/factura";
+import { claveFactura, type FacturaDatos } from "@/lib/factura";
 import { hayIA, type IngresoDia } from "@/lib/leer-documento-ia";
 import { exigirPermiso } from "@/lib/negocio";
 import { crearClienteServidor } from "@/lib/supabase/server";
@@ -60,6 +60,24 @@ export default async function PaginaBandeja({ params }: PageProps<"/n/[org]/band
     for (const c of data ?? []) existentes.set(c.fecha, (existentes.get(c.fecha) ?? 0) + Number(c.venta));
   }
 
+  // Facturas de la bandeja que ya están registradas (mismo proveedor, número y fecha): se avisa para
+  // que no se cuenten dos veces.
+  const numerosHoja = filas.flatMap((f) =>
+    ((f.datos as { facturas?: FacturaDatos[] } | null)?.facturas ?? []).flatMap((x) => (x.numero ? [x.numero] : [])),
+  );
+  const yaRegistradas = new Set<string>();
+  if (numerosHoja.length > 0) {
+    const { data } = await supabase
+      .from("facturas_recibidas")
+      .select("proveedor, numero, fecha")
+      .eq("organizacion_id", org)
+      .in("numero", numerosHoja);
+    for (const f of data ?? []) {
+      const clave = claveFactura(f);
+      if (clave) yaRegistradas.add(clave);
+    }
+  }
+
   // Un mismo archivo puede traer facturas y gastos por un lado e ingresos por otro: cada parte
   // pendiente es una tarjeta, y el archivo sale de la bandeja cuando se han decidido todas.
   const documentos: DocumentoPendiente[] = filas.flatMap((fila) => {
@@ -89,6 +107,10 @@ export default async function PaginaBandeja({ params }: PageProps<"/n/[org]/band
         banco: numero(datos.banco),
       },
       facturas,
+      repetidas: facturas.map((f) => {
+        const clave = claveFactura(f);
+        return clave !== null && yaRegistradas.has(clave);
+      }),
       ingresos,
       lector: (datos.lector === "ia" ? "ia" : "reglas") as "ia" | "reglas",
     };

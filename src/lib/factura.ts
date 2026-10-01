@@ -177,6 +177,15 @@ export function facturaDesdeReglas(l: FacturaLeida): FacturaDatos {
   };
 }
 
+// Identifica una factura para detectar repetidas: proveedor, número y fecha. Sin los tres no hay
+// forma fiable de saber si ya existe, así que devuelve null.
+export function claveFactura(f: { proveedor?: string | null; numero?: string | null; fecha?: string | null }): string | null {
+  const proveedor = f.proveedor?.trim().toLowerCase().replace(/\s+/g, " ");
+  const numero = f.numero?.trim().toLowerCase();
+  if (!proveedor || !numero || !f.fecha) return null;
+  return `${proveedor}|${numero}|${f.fecha}`;
+}
+
 // Una factura se mete sola solo si está completa y las líneas cuadran con la base o el total.
 // Si algo no cuadra, queda en la bandeja para revisarla.
 export function facturaFiable(f: FacturaDatos, hoy: string): boolean {

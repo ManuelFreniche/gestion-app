@@ -33,6 +33,8 @@ export type DocumentoPendiente = {
     banco?: number;
   };
   facturas: FacturaDatos[];
+  // Una marca por factura: true si ya hay otra igual registrada (mismo proveedor, número y fecha).
+  repetidas: boolean[];
   ingresos: IngresoDia[];
   // Para la tarjeta de ingresos: lo que ya hay en Ventas en esos días (fecha → venta).
   yaEnVentas?: Record<string, number>;
@@ -82,7 +84,7 @@ function TarjetaFactura({ org, documento, hoy }: { org: string; documento: Docum
   // Sin nada leído se ofrece una factura en blanco para escribirla mirando el documento.
   const leidas = documento.facturas.length > 0;
   const facturas: FacturaDatos[] = leidas ? documento.facturas : [{ categoria: "Otros", lineas: [] }];
-  const [incluidas, setIncluidas] = useState<boolean[]>(() => facturas.map(() => true));
+  const [incluidas, setIncluidas] = useState<boolean[]>(() => facturas.map((_, i) => facturas.length === 1 || !documento.repetidas[i]));
   const [importes, setImportes] = useState<string[]>(() => facturas.map((f) => coma(f.importe)));
   const [corregir, setCorregir] = useState(!leidas);
   const [verDocumento, setVerDocumento] = useState(false);
@@ -166,6 +168,11 @@ function TarjetaFactura({ org, documento, hoy }: { org: string; documento: Docum
                         {f.numero ? ` · Nº ${f.numero}` : ""}
                         {f.lineas.length > 0 ? ` · ${f.lineas.length} productos` : ""}
                       </span>
+                      {documento.repetidas[i] && (
+                        <span className="text-sm font-semibold text-peligro">
+                          Parece que ya la tienes registrada. Si la marcas, se contará dos veces.
+                        </span>
+                      )}
                       <span className={`text-sm ${cuadra ? "text-exito" : "text-peligro"}`}>
                         {cuadra
                           ? "✓ Datos completos"
