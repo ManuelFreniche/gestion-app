@@ -43,6 +43,7 @@ export default async function PaginaGastos({ params, searchParams }: PageProps<"
   const ventas = ventasRes.data ? Math.round(ventasRes.data.reduce((t, c) => t + Number(c.venta) * 100, 0)) / 100 : null;
   const mayor = resumen.porCategoria[0]?.total ?? 0;
   const esMesActual = mes === hoy.slice(0, 7);
+  const puedeExportar = negocio.permisos.has("exportar.usar") && negocio.permisos.has("facturas.ver");
 
   return (
     <div className="mx-auto flex w-full max-w-xl flex-col gap-6">
@@ -86,6 +87,15 @@ export default async function PaginaGastos({ params, searchParams }: PageProps<"
           </div>
         )}
       </Tarjeta>
+
+      {puedeExportar && (
+        <a
+          href={`/n/${org}/gastos/exportar?mes=${mes}`}
+          className="flex h-14 items-center justify-center rounded-xl bg-primario px-4 text-lg font-semibold text-primario-texto"
+        >
+          Exportar {nombreMes(mes).toLowerCase()} a Excel
+        </a>
+      )}
 
       {resumen.porCategoria.length > 0 ? (
         <Tarjeta className="flex flex-col gap-4">
