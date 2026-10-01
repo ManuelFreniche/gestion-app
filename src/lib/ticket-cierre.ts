@@ -46,3 +46,10 @@ export function leerTicketCierre(textoPdf: string): TicketCierre | null {
     fecha: leerFecha(texto),
   };
 }
+
+// La venta del día incluye lo cobrado en efectivo y en banco: si es menor, algo se ha leído mal
+// (por ejemplo, un ticket medio tomado por la venta). Mejor revisarlo que guardar una venta falsa.
+export function ticketCoherente(t: Pick<TicketCierre, "venta" | "efectivo" | "banco">): boolean {
+  if (t.efectivo === null && t.banco === null) return true;
+  return t.venta + 0.05 >= (t.efectivo ?? 0) + (t.banco ?? 0);
+}

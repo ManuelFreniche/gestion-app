@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { leerTicketCierre } from "../ticket-cierre";
+import { leerTicketCierre, ticketCoherente } from "../ticket-cierre";
 
 // Texto tal como sale de un ticket real de cierre (Estado de la caja).
 const TICKET = `ESTADO DE LA CAJA
@@ -57,5 +57,13 @@ describe("leerTicketCierre", () => {
 
   it("devuelve null si no es un ticket de cierre", () => {
     expect(leerTicketCierre("Factura de Helados SL, total 45,00")).toBeNull();
+  });
+});
+
+describe("ticketCoherente", () => {
+  it("la venta no puede ser menor que lo cobrado", () => {
+    expect(ticketCoherente({ venta: 136.7, efectivo: 10.8, banco: 125.9 })).toBe(true);
+    expect(ticketCoherente({ venta: 6.51, efectivo: 125.9, banco: 0 })).toBe(false);
+    expect(ticketCoherente({ venta: 50, efectivo: null, banco: null })).toBe(true);
   });
 });
