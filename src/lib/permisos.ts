@@ -25,12 +25,6 @@ export const MODULOS: Modulo[] = [
     permisoVer: "ventas.ver",
   },
   {
-    clave: "inventario",
-    nombre: "Inventario",
-    descripcion: "Stock, mínimos y recuentos desde el móvil.",
-    permisoVer: "inventario.ver",
-  },
-  {
     clave: "gastos",
     nombre: "Gastos",
     descripcion: "Proveedores y gastos por categoría.",
@@ -51,7 +45,7 @@ export const MODULOS: Modulo[] = [
   {
     clave: "margenes",
     nombre: "Márgenes",
-    descripcion: "Coste y precio de cada producto.",
+    descripcion: "Cuánto te queda cada mes y qué productos han cambiado de precio.",
     permisoVer: "margenes.ver",
   },
 ];
