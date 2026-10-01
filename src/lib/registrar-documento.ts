@@ -46,6 +46,8 @@ export async function registrarDocumento(entrada: {
   ocrHecho?: boolean;
   // De dónde viene el documento (por defecto, subido a mano).
   origen?: "subida" | "correo";
+  // Tiempo máximo para la lectura con IA (por defecto, el de una subida manual).
+  tiempoIaMs?: number;
 }): Promise<ResultadoSubida> {
   const { org, ruta, nombre, tipoArchivo } = entrada;
   if (!UUID.test(org) || !ruta.startsWith(`${org}/`)) {
@@ -95,7 +97,7 @@ export async function registrarDocumento(entrada: {
   let motivoFallo: string | undefined;
   let lector: "ia" | "reglas" = "reglas";
   if (!lectura && ia) {
-    const respuesta = await leerDocumentoConIA({ texto: textoLeido, imagenes, archivo: { bytes, tipo: tipoArchivo } });
+    const respuesta = await leerDocumentoConIA({ texto: textoLeido, imagenes, archivo: { bytes, tipo: tipoArchivo } }, entrada.tiempoIaMs);
     motivoFallo = respuesta.motivo;
     if (!respuesta.documento && respuesta.transitorio) {
       // El fallo es del proveedor (límite gratuito, saturación): no se guarda una lectura a medias.
@@ -103,7 +105,7 @@ export async function registrarDocumento(entrada: {
       await supabase.storage.from("documentos").remove([ruta]);
       return {
         error:
-          "El lector de Google no ha podido leerlo ahora mismo (límite gratuito agotado o saturado). No se ha guardado nada: vuelve a intentarlo en unos minutos.",
+          `El lector de Google no ha podido leerlo ahora mismo (límite gratuito agotado, saturado o archivo muy largo). No se ha guardado nada: vuelve a intentarlo en unos minutos.${motivoFallo ? ` Motivo técnico: ${motivoFallo.slice(0, 200)}` : ""}`,
       };
     }
     if (respuesta.documento?.ticket) lectura = respuesta.documento.ticket;

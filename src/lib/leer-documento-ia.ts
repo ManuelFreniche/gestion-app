@@ -287,8 +287,11 @@ async function conNvidia(entrada: EntradaIA, clave: string, ms: number): Promise
 
 // Orden: Gemini (gratis), Claude (de pago) y NVIDIA (gratis pero solo para pruebas). Se usa el
 // primero con clave y, si no lee nada, el siguiente.
-export async function leerDocumentoConIA(entrada: EntradaIA, ms = 45_000): Promise<LecturaDocumento> {
+// Un PDF largo (decenas de páginas y facturas) tarda más de 45 s en leerse: se da todo el tiempo que
+// permite la función (300 s) repartido entre los proveedores.
+export async function leerDocumentoConIA(entrada: EntradaIA, ms = 250_000): Promise<LecturaDocumento> {
   const motivos: string[] = [];
+  const hasta = Date.now() + ms;
   const proveedores: [string | undefined, (e: EntradaIA, clave: string, ms: number) => Promise<LecturaDocumento>][] = [
     [process.env.GEMINI_API_KEY, conGemini],
     [process.env.ANTHROPIC_API_KEY, conClaude],
@@ -296,7 +299,7 @@ export async function leerDocumentoConIA(entrada: EntradaIA, ms = 45_000): Promi
   ];
   for (const [clave, leer] of proveedores) {
     if (!clave) continue;
-    const lectura = await leer(entrada, clave, ms);
+    const lectura = await leer(entrada, clave, Math.max(5_000, hasta - Date.now()));
     if (lectura.documento) return lectura;
     if (lectura.motivo) motivos.push(lectura.motivo);
   }
