@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 import { modulosVisibles } from "../permisos";
 
 describe("modulosVisibles", () => {
-  const activos = ["inventario", "gastos", "facturas", "ventas", "margenes"];
+  const activos = ["gastos", "facturas", "ventas", "margenes"];
 
   it("un empleado no ve márgenes ni gastos", () => {
-    const permisos = new Set(["ventas.ver", "ventas.editar", "inventario.ver", "facturas.subir"]);
-    expect(modulosVisibles(permisos, activos).map((m) => m.clave)).toEqual(["ventas", "inventario"]);
+    const permisos = new Set(["ventas.ver", "ventas.editar", "facturas.subir"]);
+    expect(modulosVisibles(permisos, activos).map((m) => m.clave)).toEqual(["ventas"]);
   });
 
   it("la gestoría solo ve gastos y facturas", () => {
