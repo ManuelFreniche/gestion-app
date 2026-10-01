@@ -36,11 +36,20 @@ describe("documentoDesdeRespuesta", () => {
   it("descarta datos absurdos y líneas sin importe", () => {
     const d = documentoDesdeRespuesta({
       tipo: "facturas",
-      facturas: [{ proveedor: "X", fecha: "no-es-fecha", total: -5, lineas: [{ descripcion: "a", importe: null }, { descripcion: "", importe: 3 }] }],
+      facturas: [{ proveedor: "X", fecha: "no-es-fecha", total: 99_999_999, lineas: [{ descripcion: "a", importe: null }, { descripcion: "", importe: 3 }] }],
     });
     expect(d?.facturas[0].fecha).toBeUndefined();
     expect(d?.facturas[0].importe).toBeUndefined();
     expect(d?.facturas[0].lineas).toHaveLength(0);
+  });
+
+  it("un abono conserva los importes en negativo", () => {
+    const d = documentoDesdeRespuesta({
+      tipo: "facturas",
+      facturas: [{ proveedor: "X", fecha: "2026-09-01", total: -12.5, lineas: [{ descripcion: "Leche", importe: -10, cantidad: 2, precio_unitario: 5 }] }],
+    });
+    expect(d?.facturas[0].importe).toBe(-12.5);
+    expect(d?.facturas[0].lineas[0].importe).toBe(-10);
   });
 
   it("sin nada útil, el documento es 'otro'", () => {
