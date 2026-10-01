@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { Boton, Campo, Etiqueta } from "@/components/ui";
+import { comprimirPdf, MAX_SIN_COMPRIMIR, NoCabe } from "@/lib/comprimir-pdf";
 import { leerTextoEnNavegador, prepararDocumento } from "@/lib/leer-en-navegador";
 import type { ResultadoSubida } from "@/lib/registrar-documento";
 import { crearClienteNavegador } from "@/lib/supabase/cliente";
@@ -23,6 +24,8 @@ const MAX_MB = 25;
 const aMegas = (bytes: number) => (bytes / 1024 / 1024).toLocaleString("es-ES", { maximumFractionDigits: 1 });
 const demasiadoGrande = (archivo: File) =>
   `Pesa ${aMegas(archivo.size)} MB y el máximo es ${MAX_MB} MB. Divídelo en dos o comprímelo y vuelve a subirlo.`;
+const noCabe = (paginas: number) =>
+  `Tiene ${paginas} páginas y no consigo reducirlo sin que se pierdan los números. Divídelo en dos partes y súbelas por separado: no he leído nada a medias.`;
 
 const conTiempo = <T,>(promesa: Promise<T>, ms: number, alternativa: T) =>
   Promise.race([promesa, new Promise<T>((resolver) => setTimeout(() => resolver(alternativa), ms))]);
@@ -69,14 +72,27 @@ export function SubirTickets({ org, hoy, lectorDirecto }: { org: string; hoy: st
     setFilas(archivos.map((a) => ({ nombre: a.name, fase: "cola" })));
     const supabase = crearClienteNavegador();
 
-    const leerUno = async (archivo: File, indice: number) => {
+    const leerUno = async (original: File, indice: number) => {
       const fin = (fase: Fase, texto: string) => cambiar(indice, { fase, texto });
-      const extension = EXTENSION[archivo.type];
+      const extension = EXTENSION[original.type];
       if (!extension) return fin("error", "Solo se pueden subir PDF o fotos (JPG, PNG).");
 
+      // Un PDF pesado se reduce aquí, página a página y sin saltarse ninguna.
+      let archivo = original;
+      if (original.type === "application/pdf" && original.size > MAX_SIN_COMPRIMIR) {
+        const peso = aMegas(original.size);
+        cambiar(indice, { fase: "subiendo", texto: `Pesa ${peso} MB: lo reduzco en tu móvil u ordenador…` });
+        try {
+          archivo = await comprimirPdf(original, (hechas, total) =>
+            cambiar(indice, { texto: `Pesa ${peso} MB: reduciéndolo… página ${hechas} de ${total}` }),
+          );
+        } catch (e) {
+          return fin("error", e instanceof NoCabe ? noCabe(e.paginas) : "No se pudo reducir el PDF. Prueba con un archivo más pequeño.");
+        }
+      }
       if (archivo.size > MAX_MB * 1024 * 1024) return fin("error", demasiadoGrande(archivo));
 
-      cambiar(indice, { fase: "subiendo" });
+      cambiar(indice, { fase: "subiendo", texto: undefined });
       const ruta = `${org}/${crypto.randomUUID()}.${extension}`;
       const subida = await supabase.storage.from("documentos").upload(ruta, archivo, { contentType: archivo.type });
       if (subida.error) {
@@ -118,9 +134,11 @@ export function SubirTickets({ org, hoy, lectorDirecto }: { org: string; hoy: st
       router.refresh(); // las tarjetas de abajo aparecen según se van leyendo
     };
 
+    // Comprimir gasta mucha memoria: los archivos pesados se tratan de uno en uno.
+    const hayPesados = archivos.some((a) => a.size > MAX_SIN_COMPRIMIR);
     let siguiente = 0;
     await Promise.all(
-      Array.from({ length: Math.min(lectorDirecto ? 1 : A_LA_VEZ, archivos.length) }, async () => {
+      Array.from({ length: Math.min(lectorDirecto || hayPesados ? 1 : A_LA_VEZ, archivos.length) }, async () => {
         while (siguiente < archivos.length) {
           const indice = siguiente++;
           await leerUno(archivos[indice], indice);
