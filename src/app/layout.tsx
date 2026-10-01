@@ -3,13 +3,15 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Gestión",
-  description: "Gestión de stock, gastos, facturas y márgenes para tu negocio",
+  description: "Gestión de ventas, gastos, facturas y márgenes para tu negocio",
+  appleWebApp: { capable: true, title: "Gestión", statusBarStyle: "default" },
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
+  themeColor: "#2563eb",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
