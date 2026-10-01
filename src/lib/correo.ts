@@ -159,6 +159,7 @@ export async function revisarCorreo(
           nombre: adjunto.nombre,
           tipoArchivo: adjunto.tipo,
           origen: "correo",
+          tiempoIaMs: 45_000,
         });
         if (r.estado === "repetido") resultado.repetidos++;
         else if (r.estado === "metido" || r.estado === "pendiente") resultado.nuevos++;

@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { registrarDocumento, type ResultadoSubida } from "@/lib/registrar-documento";
 
-// Leer un documento con IA puede tardar unos segundos.
-export const maxDuration = 60;
+// Leer un documento con IA puede tardar unos segundos y, con un PDF largo, varios minutos.
+export const maxDuration = 300;
 
 // El navegador llama aquí (y no a una acción de servidor) para poder leer varios documentos a la vez.
 // Los permisos los decide la base de datos con la sesión de quien llama.
