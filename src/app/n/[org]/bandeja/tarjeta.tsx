@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useActionState, useState } from "react";
 import { Aviso, Boton, Campo, Etiqueta, Tarjeta } from "@/components/ui";
-import { euros, fechaLarga, leerImporte } from "@/lib/cierre";
+import { euros, fechaLarga, leerImporte, leerImporteConSigno } from "@/lib/cierre";
 import { CATEGORIAS, facturaFiable, type FacturaDatos } from "@/lib/factura";
 import type { IngresoDia } from "@/lib/leer-documento-ia";
 import {
@@ -89,7 +89,7 @@ function TarjetaFactura({ org, documento, hoy }: { org: string; documento: Docum
   const [corregir, setCorregir] = useState(!leidas);
   const [verDocumento, setVerDocumento] = useState(false);
 
-  const total = facturas.reduce((t, _, i) => t + (incluidas[i] ? (leerImporte(importes[i]) ?? 0) : 0), 0);
+  const total = facturas.reduce((t, _, i) => t + (incluidas[i] ? (leerImporteConSigno(importes[i]) ?? 0) : 0), 0);
   const cuantas = incluidas.filter(Boolean).length;
   const trabajando = aprobando || descartando;
 
@@ -181,7 +181,7 @@ function TarjetaFactura({ org, documento, hoy }: { org: string; documento: Docum
                             : "Lectura básica: comprueba el importe en el documento"}
                       </span>
                     </span>
-                    <span className="text-xl font-bold tabular-nums">{euros(leerImporte(importes[i]) ?? 0)}</span>
+                    <span className="text-xl font-bold tabular-nums">{euros(leerImporteConSigno(importes[i]) ?? 0)}</span>
                   </label>
                 </li>
               );
@@ -217,7 +217,7 @@ function TarjetaFactura({ org, documento, hoy }: { org: string; documento: Docum
                     <Campo
                       id={`importe-${id}`}
                       name={`importe_${i}`}
-                      inputMode="decimal"
+                      inputMode="text"
                       autoComplete="off"
                       value={importes[i]}
                       onChange={(e) => setImportes((a) => a.map((v, j) => (j === i ? e.target.value : v)))}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { esFecha, hoyEn, leerImporte, sumarDias } from "../cierre";
+import { esFecha, hoyEn, leerImporte, leerImporteConSigno, sumarDias } from "../cierre";
 
 describe("leerImporte", () => {
   it("entiende coma y punto decimal", () => {
@@ -33,5 +33,17 @@ describe("fechas", () => {
     expect(esFecha("30/09/2026")).toBe(false);
     expect(sumarDias("2026-09-30", 1)).toBe("2026-10-01");
     expect(sumarDias("2026-03-01", -1)).toBe("2026-02-28");
+  });
+});
+
+describe("leerImporteConSigno", () => {
+  it("admite un menos delante para los abonos", () => {
+    expect(leerImporteConSigno("-121,00")).toBe(-121);
+    expect(leerImporteConSigno("−1.234,50")).toBe(-1234.5);
+    expect(leerImporteConSigno("121,00")).toBe(121);
+  });
+  it("rechaza lo que no es un importe", () => {
+    expect(leerImporteConSigno("-")).toBeNull();
+    expect(leerImporteConSigno("--5")).toBeNull();
   });
 });
