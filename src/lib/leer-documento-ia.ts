@@ -12,13 +12,24 @@ const MODELO_NVIDIA_TEXTO = "meta/llama-3.3-70b-instruct";
 const MODELO_NVIDIA_VISION = "meta/llama-3.2-90b-vision-instruct";
 const MAX_FACTURAS = 30;
 const MAX_LINEAS = 80;
+const MAX_INGRESOS = 366;
 
 export type EntradaIA = {
   texto: string;
   imagenes: string[]; // páginas como JPEG en base64
   archivo?: { bytes: Uint8Array; tipo: string }; // el documento original, que Gemini lee entero
 };
-export type DocumentoIA = { tipo: "ticket_cierre" | "facturas" | "otro"; ticket: TicketCierre | null; facturas: FacturaDatos[] };
+// Un día de una hoja de ingresos: lo vendido ese día.
+// `filas` solo aparece si la hoja traía varias filas del mismo día y se han sumado.
+export type IngresoDia = { fecha: string; venta: number; efectivo?: number; banco?: number; filas?: number };
+// Un mismo archivo puede traer de todo: facturas y gastos (alquiler, nóminas, gasolina) por un lado
+// y los ingresos por días por otro.
+export type DocumentoIA = {
+  tipo: "ticket_cierre" | "facturas" | "ingresos" | "mixto" | "otro";
+  ticket: TicketCierre | null;
+  facturas: FacturaDatos[];
+  ingresos: IngresoDia[];
+};
 // `transitorio`: el fallo es del proveedor (límite gratuito, saturación, red), no del documento.
 export type LecturaDocumento = { documento: DocumentoIA | null; motivo?: string; transitorio?: boolean; modelo?: string };
 
@@ -28,21 +39,26 @@ export function hayIA(): boolean {
   return Boolean(process.env.GEMINI_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.NVIDIA_API_KEY);
 }
 
-const DESCRIPCION = `Esto es un documento de un negocio (una heladería/obrador) en España. Puede ser:
-- "ticket_cierre": el ticket "Estado de la caja" de cierre del día. Da en "ticket": venta (Total Tickets + Total Facturas), efectivo, banco (tarjeta) y fecha (aaaa-mm-dd solo si se ve claro).
-- "facturas": una o VARIAS facturas o albaranes de proveedores (un mismo archivo puede traer muchas, una por página o seguidas). Devuelve UNA entrada por cada factura o albarán distinto.
-- "otro": cualquier otra cosa.
-El documento puede tener VARIAS PÁGINAS: lee todas. Una factura puede ocupar varias páginas (entonces es una sola entrada, con un solo total), y una página puede traer una factura entera. Nunca dejes facturas sin devolver ni mezcles dos facturas en una.
-Para cada factura: proveedor (quien vende, NO el cliente; Alpino's / Manuel Freniche es el cliente), numero, fecha (aaaa-mm-dd), base_imponible, total (con IVA, el importe a pagar), categoria (Materia prima: alimentos y bebidas para vender o elaborar; Suministros: material, envases, limpieza, luz, agua; Alquiler; Nóminas; Otros) y lineas.
+const DESCRIPCION = `Esto es un documento de un negocio (una heladería/obrador) en España. Puede traer UNA O VARIAS de estas cosas, que debes separar:
+- "ticket": el ticket "Estado de la caja" de cierre de UN día. Da venta (Total Tickets + Total Facturas), efectivo, banco (tarjeta) y fecha (aaaa-mm-dd solo si se ve claro).
+- "facturas": facturas, albaranes y OTROS GASTOS, una entrada por cada documento de gasto distinto:
+  · facturas o albaranes de proveedores (un mismo archivo puede traer muchas, una por página o seguidas);
+  · el recibo o factura del ALQUILER del local (categoria "Alquiler"; proveedor = el casero o la inmobiliaria);
+  · NÓMINAS de empleados (categoria "Nóminas"; proveedor = nombre del trabajador; total = líquido a percibir);
+  · tickets de GASOLINA o combustible (categoria "Gasolina"; proveedor = la gasolinera).
+- "ingresos": una hoja, tabla o resumen de ingresos/ventas con VARIOS días (por ejemplo, todo un mes). Devuelve UNA entrada por día: fecha (aaaa-mm-dd; si solo ves día y mes, usa el año del documento), venta (total ingresado ese día), y efectivo y banco/tarjeta solo si la hoja los distingue. No devuelvas filas de totales ni subtotales del mes, ni días sin importe.
+Si el archivo mezcla cosas (por ejemplo facturas, una nómina y la hoja de ingresos), devuelve cada una en su lista. Si no hay nada de una lista, devuélvela vacía.
+El documento puede tener VARIAS PÁGINAS: lee todas. Una factura puede ocupar varias páginas (entonces es una sola entrada, con un solo total), y una página puede traer una factura entera. Nunca dejes documentos sin devolver ni mezcles dos en una entrada.
+Para cada factura o gasto: proveedor (quien vende o cobra, NO el cliente; Alpino's / Manuel Freniche es el cliente), numero, fecha (aaaa-mm-dd), base_imponible, total (con IVA, el importe a pagar), categoria (Materia prima: alimentos y bebidas para vender o elaborar; Suministros: material, envases, limpieza, luz, agua; Alquiler; Nóminas; Gasolina; Otros) y lineas.
 Cada línea: descripcion (producto, corta), cantidad, unidad (ud, kg, l, caja…), precio_unitario (sin IVA, por unidad, como figura en la factura) e importe (de la línea, sin IVA).
 Importes como números con punto decimal. Si un dato no se ve con claridad, pon null. No inventes nada. Si no hay líneas legibles, deja lineas vacío.`;
 
-const FORMA_JSON = `Responde SOLO con un JSON con esta forma: {"tipo": "ticket_cierre"|"facturas"|"otro", "ticket": {"venta","efectivo","banco","fecha"}|null, "facturas": [{"proveedor","numero","fecha","base_imponible","total","categoria","lineas":[{"descripcion","cantidad","unidad","precio_unitario","importe"}]}]}`;
+const FORMA_JSON = `Responde SOLO con un JSON con esta forma: {"tipo": "ticket_cierre"|"facturas"|"ingresos"|"mixto"|"otro", "ticket": {"venta","efectivo","banco","fecha"}|null, "facturas": [{"proveedor","numero","fecha","base_imponible","total","categoria","lineas":[{"descripcion","cantidad","unidad","precio_unitario","importe"}]}], "ingresos": [{"fecha","venta","efectivo","banco"}]}`;
 
 const ESQUEMA = {
   type: "object",
   properties: {
-    tipo: { type: "string", enum: ["ticket_cierre", "facturas", "otro"] },
+    tipo: { type: "string", enum: ["ticket_cierre", "facturas", "ingresos", "mixto", "otro"] },
     ticket: {
       type: ["object", "null"],
       properties: {
@@ -81,6 +97,19 @@ const ESQUEMA = {
         required: ["proveedor", "fecha", "total", "lineas"],
       },
     },
+    ingresos: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          fecha: { type: "string" },
+          venta: { type: "number" },
+          efectivo: { type: ["number", "null"] },
+          banco: { type: ["number", "null"] },
+        },
+        required: ["fecha", "venta"],
+      },
+    },
   },
   required: ["tipo", "facturas"],
 };
@@ -96,6 +125,36 @@ function texto(v: unknown, max: number): string | undefined {
   if (typeof v !== "string") return undefined;
   const t = v.replace(/\s+/g, " ").trim().slice(0, max);
   return t || undefined;
+}
+
+// Los días de una hoja de ingresos. Un día sin fecha válida o sin importe se descarta; si la hoja
+// trae varias filas del mismo día, se suman y se avisa en `filas`.
+export function ingresosDesdeRespuesta(entrada: unknown): IngresoDia[] {
+  const porDia = new Map<string, IngresoDia>();
+  for (const bruto of Array.isArray(entrada) ? entrada.slice(0, MAX_INGRESOS * 2) : []) {
+    if (typeof bruto !== "object" || bruto === null) continue;
+    const d = bruto as Record<string, unknown>;
+    const venta = dinero(d.venta);
+    if (typeof d.fecha !== "string" || !esFecha(d.fecha) || venta === undefined || venta <= 0) continue;
+    const efectivo = dinero(d.efectivo);
+    const banco = dinero(d.banco);
+    const antes = porDia.get(d.fecha);
+    if (!antes) {
+      porDia.set(d.fecha, { fecha: d.fecha, venta, ...(efectivo !== undefined && { efectivo }), ...(banco !== undefined && { banco }) });
+      continue;
+    }
+    const suma = (a?: number, b?: number) => (a === undefined && b === undefined ? undefined : Math.round(((a ?? 0) + (b ?? 0)) * 100) / 100);
+    const e = suma(antes.efectivo, efectivo);
+    const b = suma(antes.banco, banco);
+    porDia.set(d.fecha, {
+      fecha: d.fecha,
+      venta: Math.round((antes.venta + venta) * 100) / 100,
+      ...(e !== undefined && { efectivo: e }),
+      ...(b !== undefined && { banco: b }),
+      filas: (antes.filas ?? 1) + 1,
+    });
+  }
+  return [...porDia.values()].sort((a, b) => a.fecha.localeCompare(b.fecha)).slice(0, MAX_INGRESOS);
 }
 
 // Convierte lo que devuelve el modelo en un documento validado.
@@ -142,8 +201,10 @@ export function documentoDesdeRespuesta(entrada: unknown): DocumentoIA | null {
       lineas,
     });
   }
-  const tipo = datos.tipo === "ticket_cierre" && ticket ? "ticket_cierre" : facturas.length ? "facturas" : "otro";
-  return { tipo, ticket: tipo === "ticket_cierre" ? ticket : null, facturas: tipo === "facturas" ? facturas : [] };
+  const ingresos = ingresosDesdeRespuesta(datos.ingresos);
+  if (datos.tipo === "ticket_cierre" && ticket) return { tipo: "ticket_cierre", ticket, facturas: [], ingresos: [] };
+  const tipo = facturas.length && ingresos.length ? "mixto" : facturas.length ? "facturas" : ingresos.length ? "ingresos" : "otro";
+  return { tipo, ticket: null, facturas, ingresos };
 }
 
 

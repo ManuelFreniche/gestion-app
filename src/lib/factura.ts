@@ -2,7 +2,7 @@
 // Es la misma idea que el robot de la app antigua: reglas de texto, sin IA y sin coste.
 // Si un dato no aparece, queda vacío y la persona lo escribe al revisarla en la bandeja.
 
-export const CATEGORIAS = ["Materia prima", "Suministros", "Alquiler", "Nóminas", "Otros"] as const;
+export const CATEGORIAS = ["Materia prima", "Suministros", "Alquiler", "Nóminas", "Gasolina", "Otros"] as const;
 export type Categoria = (typeof CATEGORIAS)[number];
 
 export type FacturaLeida = {

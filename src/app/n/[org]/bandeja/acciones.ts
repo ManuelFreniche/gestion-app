@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { esFecha, leerImporte } from "@/lib/cierre";
+import { esFecha, hoyEn, leerImporte } from "@/lib/cierre";
 import { CATEGORIAS, type FacturaDatos } from "@/lib/factura";
 import { crearClienteServidor } from "@/lib/supabase/server";
 
@@ -107,6 +107,74 @@ export async function aprobarFacturas(_: EstadoBandeja, formData: FormData): Pro
 
   // La tarjeta se queda mostrando "Hecho" con un enlace; la bandeja se actualiza al volver a entrar.
   revalidatePath(`/n/${org}/facturas`);
+  revalidatePath(`/n/${org}/gastos`);
+  return { ok: true };
+}
+
+// Mete en Ventas los días de una hoja de ingresos (un cierre por día; si el día ya tenía cierre, se
+// actualiza con la hoja). Las cifras salen de lo leído y de lo que la persona haya corregido.
+export async function aprobarIngresos(_: EstadoBandeja, formData: FormData): Promise<EstadoBandeja> {
+  const org = String(formData.get("org") ?? "");
+  const documento = String(formData.get("documento") ?? "");
+  const local = String(formData.get("local") ?? "");
+  const cantidad = Number(formData.get("cantidad"));
+  if (![org, documento, local].every((id) => UUID.test(id)) || !Number.isInteger(cantidad) || cantidad < 1 || cantidad > 400) {
+    return { error: "Algo ha ido mal. Recarga la página e inténtalo de nuevo." };
+  }
+
+  const supabase = await crearClienteServidor();
+  const { data: ajustes } = await supabase.from("ajustes_organizacion").select("zona_horaria").eq("organizacion_id", org).maybeSingle();
+  const hoy = hoyEn(ajustes?.zona_horaria ?? "Europe/Madrid");
+
+  const dias: Record<string, unknown>[] = [];
+  const vistos = new Set<string>();
+  for (let i = 0; i < cantidad; i++) {
+    if (formData.get(`incluir_${i}`) !== "on") continue;
+    const fecha = String(formData.get(`fecha_${i}`) ?? "");
+    const venta = leerImporte(String(formData.get(`venta_${i}`) ?? ""));
+    if (!esFecha(fecha)) return { error: `Hay un día sin fecha válida (fila ${i + 1}).` };
+    if (fecha > hoy) return { error: `El ${fecha} es un día futuro: desmárcalo o corrígelo.` };
+    if (vistos.has(fecha)) return { error: `El día ${fecha} sale dos veces. Desmarca una de las filas.` };
+    vistos.add(fecha);
+    if (venta === null) return { error: `Escribe la venta del ${fecha}, por ejemplo 136,70.` };
+    const efectivoTexto = String(formData.get(`efectivo_${i}`) ?? "");
+    const bancoTexto = String(formData.get(`banco_${i}`) ?? "");
+    const efectivo = efectivoTexto ? leerImporte(efectivoTexto) : null;
+    const banco = bancoTexto ? leerImporte(bancoTexto) : null;
+    dias.push({ fecha, venta, efectivo, banco });
+  }
+  if (dias.length === 0) return { error: "Marca al menos un día para meterlo." };
+
+  const { error } = await supabase.rpc("registrar_ingresos", { p_documento: documento, p_local: local, p_dias: dias as never });
+  if (error) {
+    return {
+      error:
+        error.code === "P0002"
+          ? "Esta hoja ya se revisó. Recarga la página."
+          : error.code === "42501"
+            ? "No tienes permiso para meter ventas."
+            : "No se pudo meter la hoja. Inténtalo de nuevo.",
+    };
+  }
+  revalidatePath(`/n/${org}/ventas`);
+  revalidatePath(`/n/${org}/gastos`);
+  return { ok: true };
+}
+
+// Deja fuera una parte de un documento (sus facturas o sus ingresos). El documento sale de la
+// bandeja cuando se han decidido todas sus partes.
+export async function descartarParte(_: EstadoBandeja, formData: FormData): Promise<EstadoBandeja> {
+  const org = String(formData.get("org") ?? "");
+  const documento = String(formData.get("documento") ?? "");
+  const parte = String(formData.get("parte") ?? "");
+  if (!UUID.test(org) || !UUID.test(documento) || (parte !== "facturas" && parte !== "ingresos")) {
+    return { error: "Algo ha ido mal. Recarga la página." };
+  }
+  const supabase = await crearClienteServidor();
+  const { error } = await supabase.rpc("cerrar_parte", { p_documento: documento, p_parte: parte, p_resultado: "descartada" });
+  if (error) {
+    return { error: error.code === "P0002" ? "Ya se revisó. Recarga la página." : "No se pudo descartar. Inténtalo de nuevo." };
+  }
   return { ok: true };
 }
 

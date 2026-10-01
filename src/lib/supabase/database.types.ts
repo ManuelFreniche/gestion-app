@@ -670,6 +670,10 @@ export type Database = {
         }
         Returns: string
       }
+      cerrar_parte: {
+        Args: { p_documento: string; p_parte: string; p_resultado: string }
+        Returns: undefined
+      }
       crear_organizacion: {
         Args: { p_local?: string; p_nombre: string }
         Returns: string
@@ -688,6 +692,10 @@ export type Database = {
       mis_permisos: { Args: { p_organizacion: string }; Returns: string[] }
       registrar_facturas: {
         Args: { p_documento: string; p_facturas: Json }
+        Returns: number
+      }
+      registrar_ingresos: {
+        Args: { p_dias: Json; p_documento: string; p_local: string }
         Returns: number
       }
     }
