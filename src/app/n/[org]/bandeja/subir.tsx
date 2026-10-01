@@ -18,6 +18,12 @@ const EXTENSION: Record<string, string> = {
 // Cuántos documentos se leen a la vez.
 const A_LA_VEZ = 3;
 
+// Lo máximo que acepta el almacén de documentos (ver la migración del bucket).
+const MAX_MB = 25;
+const aMegas = (bytes: number) => (bytes / 1024 / 1024).toLocaleString("es-ES", { maximumFractionDigits: 1 });
+const demasiadoGrande = (archivo: File) =>
+  `Pesa ${aMegas(archivo.size)} MB y el máximo es ${MAX_MB} MB. Divídelo en dos o comprímelo y vuelve a subirlo.`;
+
 const conTiempo = <T,>(promesa: Promise<T>, ms: number, alternativa: T) =>
   Promise.race([promesa, new Promise<T>((resolver) => setTimeout(() => resolver(alternativa), ms))]);
 
@@ -68,10 +74,15 @@ export function SubirTickets({ org, hoy, lectorDirecto }: { org: string; hoy: st
       const extension = EXTENSION[archivo.type];
       if (!extension) return fin("error", "Solo se pueden subir PDF o fotos (JPG, PNG).");
 
+      if (archivo.size > MAX_MB * 1024 * 1024) return fin("error", demasiadoGrande(archivo));
+
       cambiar(indice, { fase: "subiendo" });
       const ruta = `${org}/${crypto.randomUUID()}.${extension}`;
       const subida = await supabase.storage.from("documentos").upload(ruta, archivo, { contentType: archivo.type });
-      if (subida.error) return fin("error", "No se pudo subir. Inténtalo de nuevo.");
+      if (subida.error) {
+        const pesaDemasiado = /exceed|maximum|too large|payload/i.test(subida.error.message);
+        return fin("error", pesaDemasiado ? demasiadoGrande(archivo) : "No se pudo subir. Inténtalo de nuevo.");
+      }
 
       cambiar(indice, { fase: "leyendo" });
       const enviar = (extra: { texto: string; imagenes: string[]; paginas?: string[]; ocrHecho?: boolean }): Promise<ResultadoSubida> =>
