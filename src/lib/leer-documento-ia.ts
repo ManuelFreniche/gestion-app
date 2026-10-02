@@ -40,7 +40,7 @@ export function hayIA(): boolean {
 }
 
 const DESCRIPCION = `Esto es un documento de un negocio (una heladería/obrador) en España. Puede traer UNA O VARIAS de estas cosas, que debes separar:
-- "ticket": el ticket "Estado de la caja" de cierre de UN día. Da venta (Total Tickets + Total Facturas), efectivo, banco (tarjeta) y fecha (aaaa-mm-dd solo si se ve claro).
+- "ticket": el ticket "Estado de la caja" de cierre de UN día. Cada cifra está a la DERECHA de su etiqueta. venta = "Total Tickets" + "Total Facturas" (debe coincidir con "Total Cobrado"; NUNCA uses "Ticket/Factura Media", que es una media por ticket). efectivo = "Tickets Efectivo" + "Facturas Efectivo". banco = "Tickets Banco" + "Facturas Banco". fecha (aaaa-mm-dd) solo si aparece impresa en el documento; si no, null: no inventes ni uses la fecha de hoy.
 - "facturas": facturas, albaranes y OTROS GASTOS, una entrada por cada documento de gasto distinto:
   · facturas o albaranes de proveedores (un mismo archivo puede traer muchas, una por página o seguidas);
   · el recibo o factura del ALQUILER del local (categoria "Alquiler"; proveedor = el casero o la inmobiliaria);
