@@ -10,7 +10,7 @@ export function VistaPrevia({ url, tipo, nombre }: { url: string; tipo: string; 
   const [cargando, setCargando] = useState(tipo === "application/pdf");
 
   useEffect(() => {
-    if (tipo !== "application/pdf") return;
+    if (tipo !== "application/pdf" || !url) return;
     let cancelado = false;
     const destino = paginas.current;
 
@@ -54,6 +54,8 @@ export function VistaPrevia({ url, tipo, nombre }: { url: string; tipo: string; 
       destino?.replaceChildren();
     };
   }, [url, tipo, nombre]);
+
+  if (!url) return <p className="text-sm text-peligro">No he podido abrir el archivo ahora mismo. Recarga la página para volver a intentarlo.</p>;
 
   if (tipo !== "application/pdf") {
     return (

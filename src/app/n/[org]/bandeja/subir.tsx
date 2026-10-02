@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
-import { Boton, Campo, Etiqueta } from "@/components/ui";
+import { Boton } from "@/components/ui";
 import { comprimirPdf, MAX_SIN_COMPRIMIR, NoCabe } from "@/lib/comprimir-pdf";
 import { leerTextoEnNavegador, prepararDocumento } from "@/lib/leer-en-navegador";
 import type { ResultadoSubida } from "@/lib/registrar-documento";
@@ -55,13 +55,12 @@ function Icono({ fase }: { fase: Fase }) {
 // Sube los documentos directamente a Storage (así no importa que pesen), los prepara en este
 // dispositivo y el servidor los lee. Se pueden soltar varios a la vez y cada uno muestra en qué
 // paso va. Lo leído aparece debajo para que tú decidas si se mete.
-export function SubirTickets({ org, hoy, lectorDirecto }: { org: string; hoy: string; lectorDirecto: boolean }) {
+export function SubirTickets({ org, lectorDirecto }: { org: string; lectorDirecto: boolean }) {
   const router = useRouter();
   const entrada = useRef<HTMLInputElement>(null);
   const [arrastrando, setArrastrando] = useState(false);
   const [filas, setFilas] = useState<Fila[]>([]);
   const [trabajando, setTrabajando] = useState(false);
-  const [fecha, setFecha] = useState(hoy);
 
   const cambiar = (indice: number, cambio: Partial<Fila>) =>
     setFilas((actuales) => actuales.map((f, i) => (i === indice ? { ...f, ...cambio } : f)));
@@ -112,8 +111,6 @@ export function SubirTickets({ org, hoy, lectorDirecto }: { org: string; hoy: st
             ruta,
             nombre: archivo.name,
             tipoArchivo: archivo.type,
-            // Con varios archivos no se puede saber a qué día corresponde cada uno.
-            fecha: archivos.length === 1 ? fecha : undefined,
             ...extra,
           }),
         })
@@ -129,7 +126,6 @@ export function SubirTickets({ org, hoy, lectorDirecto }: { org: string; hoy: st
       }
       if (resultado.error) fin("error", resultado.error);
       else if (resultado.estado === "repetido") fin("repetido", "Ya la tenías guardada. No hago nada.");
-      else if (resultado.estado === "metido") fin("bien", resultado.detalle ?? "Metido.");
       else fin("revisar", resultado.detalle ?? "Léela abajo y decide si la metes.");
       router.refresh(); // las tarjetas de abajo aparecen según se van leyendo
     };
@@ -199,16 +195,6 @@ export function SubirTickets({ org, hoy, lectorDirecto }: { org: string; hoy: st
           ))}
         </ul>
       )}
-
-      <details className="text-base">
-        <summary className="cursor-pointer text-texto-suave">Es un ticket de caja sin fecha</summary>
-        <div className="mt-2 flex flex-col gap-1.5">
-          <Etiqueta htmlFor="fecha-subida" className="text-base">
-            Si subes un solo ticket y no trae fecha, se guarda con este día
-          </Etiqueta>
-          <Campo id="fecha-subida" type="date" value={fecha} max={hoy} onChange={(e) => setFecha(e.target.value || hoy)} />
-        </div>
-      </details>
     </div>
   );
 }

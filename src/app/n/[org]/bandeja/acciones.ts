@@ -3,55 +3,70 @@
 import { revalidatePath } from "next/cache";
 import { esFecha, hoyEn, leerImporte, leerImporteConSigno } from "@/lib/cierre";
 import { CATEGORIAS, type FacturaDatos } from "@/lib/factura";
+import { leerLoteCierres } from "@/lib/lote-cierres";
+import { releerDocumento } from "@/lib/registrar-documento";
 import { crearClienteServidor } from "@/lib/supabase/server";
 
-export type EstadoBandeja = { error?: string; ok?: boolean };
+export type EstadoBandeja = { error?: string; ok?: boolean; metidos?: number };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// Mete el ticket revisado como cierre del día.
-export async function aprobarCierre(_: EstadoBandeja, formData: FormData): Promise<EstadoBandeja> {
+// Mete en Ventas los cierres de caja marcados, con las cifras que la persona ha revisado y corregido.
+// Se comprueban todos antes de guardar ninguno; después cada cierre se guarda por separado, así que si
+// uno falla los demás ya están metidos y el mensaje dice cuál falló.
+export async function aprobarCierres(_: EstadoBandeja, formData: FormData): Promise<EstadoBandeja> {
   const org = String(formData.get("org") ?? "");
-  const documento = String(formData.get("documento") ?? "");
-  const local = String(formData.get("local") ?? "");
-  const fecha = String(formData.get("fecha") ?? "");
-  const venta = leerImporte(String(formData.get("venta") ?? ""));
-  const efectivoTexto = String(formData.get("efectivo") ?? "").trim();
-  const bancoTexto = String(formData.get("banco") ?? "").trim();
-  const efectivo = efectivoTexto ? leerImporte(efectivoTexto) : null;
-  const banco = bancoTexto ? leerImporte(bancoTexto) : null;
-
-  if (![org, documento, local].every((id) => UUID.test(id)) || !esFecha(fecha)) {
-    return { error: "Algo ha ido mal. Recarga la página e inténtalo de nuevo." };
-  }
-  if (venta === null) return { error: "Escribe la venta del día, por ejemplo 136,70." };
-  if ((efectivoTexto && efectivo === null) || (bancoTexto && banco === null)) {
-    return { error: "Revisa efectivo y tarjeta: tienen que ser importes, por ejemplo 10,80." };
-  }
+  if (!UUID.test(org)) return { error: "Algo ha ido mal. Recarga la página e inténtalo de nuevo." };
 
   const supabase = await crearClienteServidor();
-  const { error } = await supabase.rpc("aprobar_cierre", {
-    p_documento: documento,
-    p_local: local,
-    p_fecha: fecha,
-    p_venta: venta,
-    ...(efectivo !== null && { p_efectivo: efectivo }),
-    ...(banco !== null && { p_banco: banco }),
-  });
+  const { data: ajustes } = await supabase.from("ajustes_organizacion").select("zona_horaria").eq("organizacion_id", org).maybeSingle();
+  const lote = leerLoteCierres(formData, hoyEn(ajustes?.zona_horaria ?? "Europe/Madrid"));
+  if ("error" in lote) return { error: lote.error };
 
-  if (error) {
-    return {
-      error:
+  let metidos = 0;
+  const fallos: string[] = [];
+  for (const fila of lote.filas) {
+    const { error } = await supabase.rpc("aprobar_cierre", {
+      p_documento: fila.documento,
+      p_local: fila.local,
+      p_fecha: fila.fecha,
+      p_venta: fila.venta,
+      ...(fila.efectivo !== null && { p_efectivo: fila.efectivo }),
+      ...(fila.banco !== null && { p_banco: fila.banco }),
+    });
+    if (!error) {
+      metidos++;
+      continue;
+    }
+    const dia = fila.fecha.split("-").reverse().join("/");
+    fallos.push(
+      `${dia}: ${
         error.code === "P0002"
-          ? "Este ticket ya se revisó. Recarga la página."
+          ? "ese cierre ya se revisó (recarga la página)"
           : error.code === "42501"
-            ? "No tienes permiso para meter cierres."
-            : "No se pudo meter el cierre. Inténtalo de nuevo.",
-    };
+            ? "no tienes permiso para meter cierres"
+            : "no se pudo meter, inténtalo de nuevo"
+      }`,
+    );
   }
 
   revalidatePath(`/n/${org}/bandeja`);
   revalidatePath(`/n/${org}/ventas`);
+  if (fallos.length > 0) {
+    const lista = fallos.join("; ");
+    return { error: metidos > 0 ? `Se metieron ${metidos}. Quedan sin meter: ${lista}.` : `No se pudo meter: ${lista}.`, metidos };
+  }
+  return { ok: true, metidos };
+}
+
+// Vuelve a leer un documento ya guardado (con el lector actual) y lo deja pendiente en la bandeja.
+export async function releerDocumentoAccion(_: EstadoBandeja, formData: FormData): Promise<EstadoBandeja> {
+  const org = String(formData.get("org") ?? "");
+  const documento = String(formData.get("documento") ?? "");
+  if (!UUID.test(org) || !UUID.test(documento)) return { error: "Algo ha ido mal. Recarga la página." };
+  const r = await releerDocumento({ org, id: documento });
+  if (r.error) return { error: r.error };
+  revalidatePath(`/n/${org}/bandeja`);
   return { ok: true };
 }
 

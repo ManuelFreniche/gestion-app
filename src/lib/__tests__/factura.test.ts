@@ -95,3 +95,33 @@ describe("claveFactura", () => {
     expect(claveFactura({ numero: "1", fecha: "2026-09-01" })).toBeNull();
   });
 });
+
+describe("totales con formatos difíciles", () => {
+  it("el espacio separa los miles: 'TOTAL 1 581,00 €' es 1.581 y no 581", () => {
+    expect(detectarTotal("ALQUILER\nTOTAL 1 581,00 €")).toBe(1581);
+    expect(detectarTotal("Total a pagar: 1\u00a0581,00")).toBe(1581);
+  });
+  it("'Total IVA' no se toma por el total aunque salga antes", () => {
+    expect(detectarTotal("Total IVA 0,80\nTotal 4,63")).toBe(4.63);
+  });
+  it("un total entre paréntesis es un abono (negativo)", () => {
+    expect(detectarTotal("ABONO\nTOTAL (121,00) €")).toBe(-121);
+  });
+});
+
+describe("el recibo del alquiler del casero", () => {
+  it("no entra como materia prima aunque el casero sea proveedor conocido", () => {
+    const f = leerFactura("Pablo M. Giménez Asnar\nRecibo ALQUILER local septiembre\nTOTAL 1 581,00 €");
+    expect(f).toMatchObject({ categoria: "Alquiler", importe: 1581 });
+    expect(leerFactura("Gimenez Asnar\nFactura de mercancía\nTotal 40,00 €")).toMatchObject({ categoria: "Materia prima" });
+  });
+});
+
+describe("claveFactura sin forma societaria", () => {
+  it("S.L., SL y mayúsculas dan la misma clave", () => {
+    const a = claveFactura({ proveedor: "AFICOS ABOGADOS Y ASESORES S.L.", numero: "7", fecha: "2026-09-01" });
+    const b = claveFactura({ proveedor: "Aficos Abogados y Asesores SL", numero: "7", fecha: "2026-09-01" });
+    expect(a).toBe(b);
+    expect(claveFactura({ proveedor: "Aficos Asesores", numero: "7", fecha: "2026-09-01" })).not.toBe(a);
+  });
+});

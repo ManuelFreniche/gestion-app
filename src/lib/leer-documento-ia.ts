@@ -1,6 +1,5 @@
-import { esFecha } from "./cierre";
 import { CATEGORIAS, type Categoria, type FacturaDatos, type LineaFactura } from "./factura";
-import { imagenPequena, jsonDeTexto, motivoHttp, ticketDesdeRespuesta } from "./leer-ticket-ia";
+import { fechaFlexible, imagenPequena, jsonDeTexto, motivoHttp, numeroFlexible, ticketDesdeRespuesta } from "./leer-ticket-ia";
 import type { TicketCierre } from "./ticket-cierre";
 
 // Lee con IA un documento entero (texto del PDF o fotos de sus páginas) y devuelve, de una vez,
@@ -29,9 +28,15 @@ export type DocumentoIA = {
   ticket: TicketCierre | null;
   facturas: FacturaDatos[];
   ingresos: IngresoDia[];
+  // Cosas que la persona debe saber de lo leído (p. ej. que se recortó una lista demasiado larga).
+  avisos?: string[];
 };
 // `transitorio`: el fallo es del proveedor (límite gratuito, saturación, red), no del documento.
-export type LecturaDocumento = { documento: DocumentoIA | null; motivo?: string; transitorio?: boolean; modelo?: string };
+// `causa`: por qué falló el proveedor, para explicarlo con palabras: se acabó el cupo de hoy, el del minuto,
+// está saturado o no hay red.
+// "sin-cupo": Google contesta "límite 0": esa clave no tiene cupo gratuito y esperar no lo arregla.
+export type CausaFallo = "dia" | "minuto" | "saturado" | "red" | "sin-cupo";
+export type LecturaDocumento = { documento: DocumentoIA | null; motivo?: string; transitorio?: boolean; causa?: CausaFallo; modelo?: string };
 
 const esTransitorio = (motivo: string) => /respondió (429|500|502|503|504)|No se pudo consultar/.test(motivo);
 
@@ -116,7 +121,8 @@ const ESQUEMA = {
 };
 
 function numero(v: unknown, max = 1_000_000): number | undefined {
-  return typeof v === "number" && Number.isFinite(v) && v >= 0 && v < max ? Math.round(v * 10_000) / 10_000 : undefined;
+  const n = numeroFlexible(v);
+  return n !== null && n >= 0 && n < max ? Math.round(n * 10_000) / 10_000 : undefined;
 }
 const dinero = (v: unknown) => {
   const n = numero(v);
@@ -124,14 +130,23 @@ const dinero = (v: unknown) => {
 };
 // Importe de una factura o de sus líneas: en un abono sale negativo.
 const dineroConSigno = (v: unknown) => {
-  if (typeof v !== "number" || v >= 0) return dinero(v);
-  const n = dinero(-v);
-  return n === undefined ? undefined : -n;
+  const n = numeroFlexible(v);
+  if (n === null || n >= 0) return dinero(n);
+  const positivo = dinero(-n);
+  return positivo === undefined ? undefined : -positivo;
 };
+// Texto del modelo; un número (p. ej. el número de factura) se admite como texto.
 function texto(v: unknown, max: number): string | undefined {
+  if (typeof v === "number" && Number.isFinite(v)) v = String(v);
   if (typeof v !== "string") return undefined;
   const t = v.replace(/\s+/g, " ").trim().slice(0, max);
   return t || undefined;
+}
+// "Materia Prima", "nominas"…: se reconoce la categoría sin fijarse en mayúsculas ni tildes.
+const sinTildes = (t: string) => t.normalize("NFD").replace(/\p{Mn}/gu, "").toLowerCase().trim();
+function categoriaDe(v: unknown): Categoria {
+  const buscada = typeof v === "string" ? sinTildes(v) : "";
+  return CATEGORIAS.find((c) => sinTildes(c) === buscada) ?? "Otros";
 }
 
 // Los días de una hoja de ingresos. Un día sin fecha válida o sin importe se descarta; si la hoja
@@ -142,19 +157,20 @@ export function ingresosDesdeRespuesta(entrada: unknown): IngresoDia[] {
     if (typeof bruto !== "object" || bruto === null) continue;
     const d = bruto as Record<string, unknown>;
     const venta = dinero(d.venta);
-    if (typeof d.fecha !== "string" || !esFecha(d.fecha) || venta === undefined || venta <= 0) continue;
+    const fechaDia = fechaFlexible(d.fecha);
+    if (!fechaDia || venta === undefined || venta <= 0) continue;
     const efectivo = dinero(d.efectivo);
     const banco = dinero(d.banco);
-    const antes = porDia.get(d.fecha);
+    const antes = porDia.get(fechaDia);
     if (!antes) {
-      porDia.set(d.fecha, { fecha: d.fecha, venta, ...(efectivo !== undefined && { efectivo }), ...(banco !== undefined && { banco }) });
+      porDia.set(fechaDia, { fecha: fechaDia, venta, ...(efectivo !== undefined && { efectivo }), ...(banco !== undefined && { banco }) });
       continue;
     }
     const suma = (a?: number, b?: number) => (a === undefined && b === undefined ? undefined : Math.round(((a ?? 0) + (b ?? 0)) * 100) / 100);
     const e = suma(antes.efectivo, efectivo);
     const b = suma(antes.banco, banco);
-    porDia.set(d.fecha, {
-      fecha: d.fecha,
+    porDia.set(fechaDia, {
+      fecha: fechaDia,
       venta: Math.round((antes.venta + venta) * 100) / 100,
       ...(e !== undefined && { efectivo: e }),
       ...(b !== undefined && { banco: b }),
@@ -170,10 +186,17 @@ export function documentoDesdeRespuesta(entrada: unknown): DocumentoIA | null {
   const datos = entrada as Record<string, unknown>;
   const ticket = ticketDesdeRespuesta(datos.ticket);
   const facturas: FacturaDatos[] = [];
+  const avisos: string[] = [];
+  if (Array.isArray(datos.facturas) && datos.facturas.length > MAX_FACTURAS) {
+    avisos.push(`El archivo trae más de ${MAX_FACTURAS} facturas: solo he leído las primeras ${MAX_FACTURAS}. Las demás no están leídas.`);
+  }
   for (const bruta of Array.isArray(datos.facturas) ? datos.facturas.slice(0, MAX_FACTURAS) : []) {
     if (typeof bruta !== "object" || bruta === null) continue;
     const f = bruta as Record<string, unknown>;
     const lineas: LineaFactura[] = [];
+    if (Array.isArray(f.lineas) && f.lineas.length > MAX_LINEAS && !avisos.some((a) => a.includes("líneas"))) {
+      avisos.push(`Una factura trae más de ${MAX_LINEAS} líneas: solo he leído las primeras ${MAX_LINEAS}, así que las líneas no suman el total.`);
+    }
     for (const l of Array.isArray(f.lineas) ? f.lineas.slice(0, MAX_LINEAS) : []) {
       if (typeof l !== "object" || l === null) continue;
       const fila = l as Record<string, unknown>;
@@ -193,11 +216,11 @@ export function documentoDesdeRespuesta(entrada: unknown): DocumentoIA | null {
     }
     const proveedor = texto(f.proveedor, 120);
     const numeroFactura = texto(f.numero, 60);
-    const fecha = typeof f.fecha === "string" && esFecha(f.fecha) ? f.fecha : undefined;
+    const fecha = fechaFlexible(f.fecha) ?? undefined;
     const total = dineroConSigno(f.total);
     const base = dineroConSigno(f.base_imponible);
     if (!proveedor && total === undefined && lineas.length === 0) continue;
-    const categoria = (CATEGORIAS as readonly string[]).includes(String(f.categoria)) ? (f.categoria as Categoria) : "Otros";
+    const categoria = categoriaDe(f.categoria);
     facturas.push({
       ...(proveedor && { proveedor }),
       ...(numeroFactura && { numero: numeroFactura }),
@@ -211,7 +234,7 @@ export function documentoDesdeRespuesta(entrada: unknown): DocumentoIA | null {
   const ingresos = ingresosDesdeRespuesta(datos.ingresos);
   if (datos.tipo === "ticket_cierre" && ticket) return { tipo: "ticket_cierre", ticket, facturas: [], ingresos: [] };
   const tipo = facturas.length && ingresos.length ? "mixto" : facturas.length ? "facturas" : ingresos.length ? "ingresos" : "otro";
-  return { tipo, ticket: null, facturas, ingresos };
+  return { tipo, ticket: null, facturas, ingresos, ...(avisos.length > 0 && { avisos }) };
 }
 
 
@@ -252,6 +275,11 @@ async function conGemini(entrada: EntradaIA, clave: string, ms: number): Promise
   } else if (entrada.imagenes.length > 0) {
     for (const data of entrada.imagenes) partes.push({ inline_data: { mime_type: "image/jpeg", data } });
   }
+  // Sin el documento ni su texto, Gemini solo recibiría las instrucciones y se inventaría una respuesta.
+  if (partes.length === 0 && !entrada.texto.trim()) {
+    const mb = archivo ? ` (${(archivo.bytes.length / 1024 / 1024).toFixed(0)} MB)` : "";
+    return { documento: null, motivo: `El archivo es demasiado grande para el lector inteligente${mb}: el máximo es ${MAX_BYTES_GEMINI / 1024 / 1024} MB. Si es una foto, hazla con menos calidad.` };
+  }
   partes.push({
     text: `${DESCRIPCION}\n\n${FORMA_JSON}${
       partes.length === 0 && entrada.texto.trim() ? `\n\nTexto extraído del documento:\n"""\n${entrada.texto.slice(0, 30_000)}\n"""` : ""
@@ -283,12 +311,20 @@ async function conGemini(entrada: EntradaIA, clave: string, ms: number): Promise
     let motivo429: string | undefined;
     let modeloUsado = modelos[0];
     let esperas = 0;
+    let saturado = 0;
+    // Qué ha pasado de pasajero con algún modelo (cupo, saturación, red): decide si merece reintentarse más tarde.
+    let causa: CausaFallo | undefined;
+    let sinCupo = false;
+    const anotarCausa = (c: CausaFallo) => {
+      // El cupo del día es la causa más útil de explicar: no se pisa con otra menos grave.
+      if (causa !== "dia") causa = c;
+    };
     for (let intento = 0; intento < 10 && modelos.length > 0; intento++) {
       const modelo = modelos[0];
       modeloUsado = modelo;
       respuesta = await llamar(modelo, true);
-      // Algunos modelos no admiten desactivar el razonamiento: se repite sin ese ajuste.
-      if (respuesta.status === 400) respuesta = await llamar(modelo, false);
+      // Algunos modelos no admiten desactivar el razonamiento: se repite sin ese ajuste solo si el error lo dice.
+      if (respuesta.status === 400 && /thinking/i.test(await respuesta.clone().text().catch(() => ""))) respuesta = await llamar(modelo, false);
       if (respuesta.ok) break;
       if (respuesta.status === 404) {
         modelos.shift(); // ese modelo ya no existe
@@ -297,6 +333,8 @@ async function conGemini(entrada: EntradaIA, clave: string, ms: number): Promise
       if (respuesta.status === 429) {
         const analisis = analizar429(await respuesta.clone().text());
         motivo429 = `${modelo}: cupo ${analisis.tipo === "dia" ? "del día" : analisis.tipo === "minuto" ? "por minuto" : "gratuito inexistente"}${analisis.detalle ? ` (${analisis.detalle})` : ""}`;
+        if (analisis.tipo === "sin-cupo") sinCupo = true;
+        else anotarCausa(analisis.tipo === "minuto" ? "minuto" : "dia");
         if (analisis.tipo === "minuto" && esperas < 3 && analisis.esperaMs !== undefined && Date.now() + analisis.esperaMs < limite - 20_000) {
           esperas++;
           await new Promise((r) => setTimeout(r, analisis.esperaMs));
@@ -305,21 +343,54 @@ async function conGemini(entrada: EntradaIA, clave: string, ms: number): Promise
         modelos.shift(); // cupo agotado: se prueba el siguiente modelo
         continue;
       }
-      if (![500, 502, 503, 504].includes(respuesta.status) || Date.now() > limite - 4000) break;
+      if (![500, 502, 503, 504].includes(respuesta.status) || Date.now() > limite - 4000) {
+        if ([500, 502, 503, 504].includes(respuesta.status)) anotarCausa("saturado");
+        break;
+      }
+      anotarCausa("saturado");
+      // Un modelo saturado dos veces seguidas se deja para probar con otro.
+      if (++saturado >= 2 && modelos.length > 1) {
+        saturado = 0;
+        modelos.shift();
+        continue;
+      }
       await new Promise((r) => setTimeout(r, 1500));
     }
-    if (!respuesta) return { documento: null, motivo: "No se pudo consultar a Gemini." };
+    if (!respuesta) return { documento: null, motivo: "No se pudo consultar a Gemini.", transitorio: true, causa: "red" };
     if (!respuesta.ok) {
       const base = await motivoHttp("Gemini", respuesta);
-      return { documento: null, motivo: motivo429 ? `${base} Cupo gratuito agotado en todos los modelos. ${motivo429}.` : base };
+      // Todos los modelos dicen "límite 0": reintentar no sirve de nada, la clave no tiene cupo gratuito.
+      if (!causa && sinCupo) return { documento: null, motivo: `${base} ${motivo429}.`, causa: "sin-cupo" };
+      // Aunque el último modelo respondiera otra cosa (404…), si antes hubo cupo agotado o saturación,
+      // lo que toca es reintentar más tarde, no guardar una tarjeta vacía.
+      return {
+        documento: null,
+        motivo: motivo429 ? `${base} Cupo gratuito agotado en todos los modelos. ${motivo429}.` : base,
+        ...(causa && { transitorio: true, causa }),
+      };
     }
-    const cuerpo = (await respuesta.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
+    const cuerpo = (await respuesta.json()) as { candidates?: { finishReason?: string; content?: { parts?: { text?: string }[] } }[] };
     const texto = (cuerpo.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? "").join("");
     const documento = documentoDesdeRespuesta(jsonDeTexto(texto));
-    return documento ? { documento, modelo: modeloUsado } : { documento: null, motivo: "Gemini no devolvió datos legibles." };
+    if (documento) return { documento, modelo: modeloUsado };
+    return {
+      documento: null,
+      motivo:
+        cuerpo.candidates?.[0]?.finishReason === "MAX_TOKENS"
+          ? "La respuesta de Gemini se cortó por ser demasiado larga (el archivo trae muchísimas facturas o líneas)."
+          : "Gemini no devolvió datos legibles.",
+    };
   } catch (e) {
-    return { documento: null, motivo: `No se pudo consultar a Gemini (${e instanceof Error ? e.message.slice(0, 80) : "error"}).` };
+    return { documento: null, motivo: `No se pudo consultar a Gemini (${e instanceof Error ? e.message.slice(0, 80) : "error"}).`, transitorio: true, causa: "red" };
   }
+}
+
+// Un fallo de cupo (429) o de saturación (5xx) se arregla esperando; una clave mala (401, 403) o una petición
+// rechazada (400) no.
+function transitorioPorEstado(estado: number): Pick<LecturaDocumento, "transitorio" | "causa"> {
+  if (estado === 429) return { transitorio: true, causa: "dia" };
+  if ([500, 502, 503, 504, 529].includes(estado)) return { transitorio: true, causa: "saturado" };
+  return {};
 }
 
 async function conClaude(entrada: EntradaIA, clave: string, ms: number): Promise<LecturaDocumento> {
@@ -344,12 +415,12 @@ async function conClaude(entrada: EntradaIA, clave: string, ms: number): Promise
       }),
       signal: AbortSignal.timeout(ms),
     });
-    if (!respuesta.ok) return { documento: null, motivo: await motivoHttp("Claude", respuesta) };
+    if (!respuesta.ok) return { documento: null, motivo: await motivoHttp("Claude", respuesta), ...transitorioPorEstado(respuesta.status) };
     const cuerpo = (await respuesta.json()) as { content?: { type: string; input?: unknown }[] };
     const documento = documentoDesdeRespuesta(cuerpo.content?.find((c) => c.type === "tool_use")?.input);
-    return { documento };
+    return { documento, modelo: "claude" };
   } catch (e) {
-    return { documento: null, motivo: `No se pudo consultar a Claude (${e instanceof Error ? e.message.slice(0, 80) : "error"}).` };
+    return { documento: null, motivo: `No se pudo consultar a Claude (${e instanceof Error ? e.message.slice(0, 80) : "error"}).`, transitorio: true, causa: "red" };
   }
 }
 
@@ -381,11 +452,11 @@ async function conNvidia(entrada: EntradaIA, clave: string, ms: number): Promise
       }),
       signal: AbortSignal.timeout(ms),
     });
-    if (!respuesta.ok) return { documento: null, motivo: await motivoHttp("NVIDIA", respuesta) };
+    if (!respuesta.ok) return { documento: null, motivo: await motivoHttp("NVIDIA", respuesta), ...transitorioPorEstado(respuesta.status) };
     const cuerpo = (await respuesta.json()) as { choices?: { message?: { content?: string } }[] };
-    return { documento: documentoDesdeRespuesta(jsonDeTexto(cuerpo.choices?.[0]?.message?.content ?? "")) };
+    return { documento: documentoDesdeRespuesta(jsonDeTexto(cuerpo.choices?.[0]?.message?.content ?? "")), modelo: "nvidia" };
   } catch (e) {
-    return { documento: null, motivo: `No se pudo consultar a NVIDIA (${e instanceof Error ? e.message.slice(0, 80) : "error"}).` };
+    return { documento: null, motivo: `No se pudo consultar a NVIDIA (${e instanceof Error ? e.message.slice(0, 80) : "error"}).`, transitorio: true, causa: "red" };
   }
 }
 
@@ -396,6 +467,9 @@ async function conNvidia(entrada: EntradaIA, clave: string, ms: number): Promise
 export async function leerDocumentoConIA(entrada: EntradaIA, ms = 250_000): Promise<LecturaDocumento> {
   const motivos: string[] = [];
   const hasta = Date.now() + ms;
+  let transitorio = false;
+  let causa: CausaFallo | undefined;
+  let sinCupo = false;
   const proveedores: [string | undefined, (e: EntradaIA, clave: string, ms: number) => Promise<LecturaDocumento>][] = [
     [process.env.GEMINI_API_KEY, conGemini],
     [process.env.ANTHROPIC_API_KEY, conClaude],
@@ -406,9 +480,17 @@ export async function leerDocumentoConIA(entrada: EntradaIA, ms = 250_000): Prom
     const lectura = await leer(entrada, clave, Math.max(5_000, hasta - Date.now()));
     if (lectura.documento) return lectura;
     if (lectura.motivo) motivos.push(lectura.motivo);
+    if (lectura.causa === "sin-cupo") sinCupo = true;
+    // Basta que un proveedor haya fallado por cupo o saturación para que merezca la pena reintentar más tarde,
+    // aunque otro (con la clave caducada, por ejemplo) haya dicho otra cosa.
+    if (lectura.transitorio) {
+      transitorio = true;
+      if (lectura.causa && causa !== "dia") causa = lectura.causa;
+    }
   }
   return {
     documento: null,
-    ...(motivos.length > 0 && { motivo: motivos.join(" "), transitorio: motivos.every(esTransitorio) }),
+    ...(motivos.length > 0 && { motivo: motivos.join(" "), transitorio: transitorio || motivos.every(esTransitorio) }),
+    ...((causa ?? (sinCupo ? "sin-cupo" : undefined)) && { causa: causa ?? "sin-cupo" }),
   };
 }
