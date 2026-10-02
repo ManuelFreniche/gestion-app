@@ -5,6 +5,7 @@ import { VERSION_LECTURA_CIERRE } from "./cierres-bandeja";
 import { facturaDesdeReglas, leerFactura, leerFacturasPorPaginas, type FacturaDatos } from "./factura";
 import { esModeloLigero, hayIA, leerDocumentoConIA, type CausaFallo, type IngresoDia } from "./leer-documento-ia";
 import { textoPorLineas } from "./pdf-lineas";
+import { cierreRepetido, claveContenido, facturasRepetidas } from "./repetidos";
 import { crearClienteServidor } from "./supabase/server";
 import { contrastarLecturaIA, leerTicketCierre, revisarTicket, type TicketCierre } from "./ticket-cierre";
 
@@ -246,6 +247,56 @@ async function tieneRegistros(supabase: Awaited<ReturnType<typeof crearClienteSe
   return (cierres.count ?? 0) + (facturas.count ?? 0) + (porDia.count ?? 0) > 0;
 }
 
+type Cliente = Awaited<ReturnType<typeof crearClienteServidor>>;
+
+// ¿Lo que se acaba de leer ya está en las cuentas o esperando en la Bandeja? Una factura con el mismo proveedor,
+// día e importe, o un cierre del mismo día y la misma venta. Devuelve qué decirle a la persona, o null.
+// Si no se puede comprobar, no se descarta nada: mejor un repetido de más en la Bandeja que perder un documento.
+async function buscarRepetido(supabase: Cliente, org: string, tipo: string, datos: Record<string, unknown>): Promise<string | null> {
+  if (tipo === "factura") {
+    const facturas = Array.isArray(datos.facturas) ? (datos.facturas as FacturaDatos[]) : [];
+    const fechas = [...new Set(facturas.flatMap((f) => (f.fecha ? [f.fecha] : [])))];
+    if (facturas.length === 0 || fechas.length === 0) return null;
+    const [registradas, pendientes] = await Promise.all([
+      supabase.from("facturas_recibidas").select("proveedor, fecha, importe").eq("organizacion_id", org).in("fecha", fechas),
+      supabase.from("documentos_entrantes").select("datos").eq("organizacion_id", org).eq("estado", "pendiente").eq("tipo", "factura").limit(300),
+    ]);
+    if (registradas.error || pendientes.error) return null;
+    const conocidas = new Set<string>();
+    for (const r of registradas.data ?? []) {
+      const clave = claveContenido({ ...r, importe: Number(r.importe) });
+      if (clave) conocidas.add(clave);
+    }
+    for (const doc of pendientes.data ?? []) {
+      const previas = (doc.datos as { facturas?: FacturaDatos[] } | null)?.facturas;
+      for (const f of Array.isArray(previas) ? previas : []) {
+        const clave = claveContenido(f);
+        if (clave) conocidas.add(clave);
+      }
+    }
+    return facturasRepetidas(facturas, conocidas)
+      ? "Esta factura ya la tenías (mismo proveedor, día e importe): la he descartado. Si no es la misma, recupérala en «Descartados»."
+      : null;
+  }
+
+  if (tipo === "cierre" && typeof datos.fecha === "string" && typeof datos.venta === "number") {
+    const [registrados, pendientes] = await Promise.all([
+      supabase.from("cierres_diarios").select("fecha, venta").eq("organizacion_id", org).eq("fecha", datos.fecha),
+      supabase.from("documentos_entrantes").select("datos").eq("organizacion_id", org).eq("estado", "pendiente").eq("tipo", "cierre").limit(300),
+    ]);
+    if (registrados.error || pendientes.error) return null;
+    const conocidos = (registrados.data ?? []).map((c) => ({ fecha: c.fecha, venta: Number(c.venta) }));
+    for (const doc of pendientes.data ?? []) {
+      const d = (doc.datos ?? {}) as { fecha?: unknown; venta?: unknown };
+      if (typeof d.fecha === "string" && typeof d.venta === "number") conocidos.push({ fecha: d.fecha, venta: d.venta });
+    }
+    return cierreRepetido(datos, conocidos)
+      ? "Este cierre ya lo tenías (mismo día y misma venta): lo he descartado. Si no es el mismo, recupéralo en «Descartados»."
+      : null;
+  }
+  return null;
+}
+
 // El archivo ya está en Storage (lo sube el navegador). Aquí se interpreta lo que el navegador
 // ha leído (texto del PDF o fotos de sus páginas), se calcula su huella para no meter dos veces
 // lo mismo y se saca el ticket de cierre o las facturas con sus líneas.
@@ -324,6 +375,10 @@ export async function registrarDocumento(entrada: {
   }
   const { tipo, datos } = interpretacion;
 
+  // Lo repetido entra ya descartado (el archivo se guarda: se recupera desde «Descartados»). Un documento con la
+  // misma huella que otro ya guardado sigue su camino de siempre, más abajo.
+  const motivoRepetido = anterior ? null : await buscarRepetido(supabase, org, tipo, datos);
+
   // Sin .select(): quien sube pero no revisa (p. ej. un empleado) no puede leer la fila.
   const { error } = await supabase.from("documentos_entrantes").insert({
     organizacion_id: org,
@@ -333,7 +388,8 @@ export async function registrarDocumento(entrada: {
     archivo_nombre: nombre.slice(0, 200),
     archivo_tipo: tipoArchivo,
     huella,
-    datos: datos as never,
+    datos: (motivoRepetido ? { ...datos, descartado_por: "repetido" } : datos) as never,
+    ...(motivoRepetido && { estado: "descartado", revisado_en: new Date().toISOString() }),
   });
 
   let recuperado: string | false = false;
@@ -361,6 +417,7 @@ export async function registrarDocumento(entrada: {
   }
 
   revalidatePath(`/n/${org}/bandeja`);
+  if (motivoRepetido && !error) return { estado: "repetido", detalle: motivoRepetido };
 
   // Nada se mete solo: ni facturas ni cierres. Una persona revisa y acepta cada cosa en la Bandeja.
   const detalle = [recuperado, interpretacion.detalle].filter(Boolean).join(" ");
