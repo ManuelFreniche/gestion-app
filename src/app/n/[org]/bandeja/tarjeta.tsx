@@ -4,14 +4,13 @@ import Link from "next/link";
 import { useActionState, useState } from "react";
 import { Aviso, Boton, Campo, Etiqueta, Tarjeta } from "@/components/ui";
 import { euros, fechaLarga, leerImporte, leerImporteConSigno } from "@/lib/cierre";
+import { enviar, protegerAccion } from "@/lib/enviar-formulario";
 import { CATEGORIAS, facturaFiable, type FacturaDatos } from "@/lib/factura";
 import type { IngresoDia } from "@/lib/leer-documento-ia";
 import {
-  aprobarCierre,
   aprobarFacturas,
   aprobarIngresos,
   cambiarTipoDocumento,
-  descartarDocumento,
   descartarParte,
   type EstadoBandeja,
 } from "./acciones";
@@ -21,17 +20,13 @@ export type DocumentoPendiente = {
   id: string;
   // Un mismo archivo puede dar varias tarjetas (sus facturas y sus ingresos): la clave las distingue.
   clave: string;
-  tipo: "cierre" | "factura" | "ingresos";
+  tipo: "factura" | "ingresos";
   nombre: string;
   tipoArchivo: string;
   url: string;
   recibido: string;
-  leido: {
-    fecha?: string;
-    venta?: number;
-    efectivo?: number;
-    banco?: number;
-  };
+  // Lo que el lector no pudo leer bien (se guarda al leerlo).
+  aviso?: string;
   facturas: FacturaDatos[];
   // Una marca por factura: true si ya hay otra igual registrada (mismo proveedor, número y fecha).
   repetidas: boolean[];
@@ -40,9 +35,17 @@ export type DocumentoPendiente = {
   yaEnVentas?: Record<string, number>;
   // Quién leyó las facturas: la IA, o las reglas de texto (menos fiables con los importes).
   lector?: "ia" | "reglas";
+  // La leyó un lector de respaldo (el más sencillo de Google, o uno gratuito de pruebas): nunca se da por completa.
+  lectorDebil?: boolean;
 };
 
 type Local = { id: string; nombre: string };
+
+// Sin conexión o con el tiempo agotado, el fallo sale en la tarjeta en vez de tirar la Bandeja entera.
+const aprobarFacturasSeguro = protegerAccion(aprobarFacturas, "Se cortó la conexión y no sé si se ha guardado. Vuelve a pulsar el botón: si ya estaba metida, te lo dirá.");
+const aprobarIngresosSeguro = protegerAccion(aprobarIngresos, "Se cortó la conexión y no sé si se ha guardado. Vuelve a pulsar el botón: si ya estaban metidos, te lo dirá.");
+const descartarParteSeguro = protegerAccion(descartarParte);
+const cambiarTipoSeguro = protegerAccion(cambiarTipoDocumento);
 
 const coma = (n?: number) => (n === undefined ? "" : n.toString().replace(".", ","));
 
@@ -52,16 +55,15 @@ export function TarjetaDocumento(props: {
   locales: Local[];
   hoy: string;
 }) {
-  if (props.documento.tipo === "factura") return <TarjetaFactura org={props.org} documento={props.documento} hoy={props.hoy} />;
   if (props.documento.tipo === "ingresos") {
     return <TarjetaIngresos org={props.org} documento={props.documento} locales={props.locales} hoy={props.hoy} />;
   }
-  return <TarjetaCierre {...props} />;
+  return <TarjetaFactura org={props.org} documento={props.documento} hoy={props.hoy} />;
 }
 
 // Enlace discreto para corregir el tipo cuando no se ha adivinado bien.
 function CambiarTipo({ org, id, a }: { org: string; id: string; a: "cierre" | "factura" }) {
-  const [estado, cambiar, cambiando] = useActionState<EstadoBandeja, FormData>(cambiarTipoDocumento, {});
+  const [estado, cambiar, cambiando] = useActionState<EstadoBandeja, FormData>(cambiarTipoSeguro, {});
   return (
     <form action={cambiar} className="flex flex-col gap-1">
       <input type="hidden" name="org" value={org} />
@@ -76,17 +78,16 @@ function CambiarTipo({ org, id, a }: { org: string; id: string; a: "cierre" | "f
 }
 
 function TarjetaFactura({ org, documento, hoy }: { org: string; documento: DocumentoPendiente; hoy: string }) {
-  const [estadoAprobar, aprobar, aprobando] = useActionState<EstadoBandeja, FormData>(aprobarFacturas, {});
-  const [estadoDescartar, descartar, descartando] = useActionState<EstadoBandeja, FormData>(
-    descartarParte,
-    {},
-  );
+  const [estadoAprobar, aprobar, aprobando] = useActionState<EstadoBandeja, FormData>(aprobarFacturasSeguro, {});
+  const [estadoDescartar, descartar, descartando] = useActionState<EstadoBandeja, FormData>(descartarParteSeguro, {});
   // Sin nada leído se ofrece una factura en blanco para escribirla mirando el documento.
   const leidas = documento.facturas.length > 0;
   const facturas: FacturaDatos[] = leidas ? documento.facturas : [{ categoria: "Otros", lineas: [] }];
   const [incluidas, setIncluidas] = useState<boolean[]>(() => facturas.map((_, i) => facturas.length === 1 || !documento.repetidas[i]));
   const [importes, setImportes] = useState<string[]>(() => facturas.map((f) => coma(f.importe)));
-  const [corregir, setCorregir] = useState(!leidas);
+  const [fechas, setFechas] = useState<string[]>(() => facturas.map((f) => f.fecha ?? (leidas ? "" : hoy)));
+  // Una fecha futura casi siempre es un error de lectura (un vencimiento, un año mal leído): se enseña el campo para corregirla.
+  const [corregir, setCorregir] = useState(!leidas || facturas.some((f) => Boolean(f.fecha && f.fecha > hoy)));
   const [verDocumento, setVerDocumento] = useState(false);
 
   const total = facturas.reduce((t, _, i) => t + (incluidas[i] ? (leerImporteConSigno(importes[i]) ?? 0) : 0), 0);
@@ -111,7 +112,7 @@ function TarjetaFactura({ org, documento, hoy }: { org: string; documento: Docum
       <Tarjeta className="flex flex-col gap-2">
         <p className="text-xl font-semibold">Descartada</p>
         <p className="text-base text-texto-suave">
-          {documento.nombre} no se ha metido. Si cambias de idea, vuelve a subir el archivo y podrás elegir de nuevo.
+          {documento.nombre} no se ha metido. Si cambias de idea, lo tienes en «Descartados», más abajo: ahí puedes volver a leerlo.
         </p>
       </Tarjeta>
     );
@@ -127,6 +128,8 @@ function TarjetaFactura({ org, documento, hoy }: { org: string; documento: Docum
         <p className="text-sm text-texto-suave">Subido {documento.recibido}</p>
       </div>
 
+      {documento.aviso && <p className="rounded-xl bg-fondo px-4 py-3 text-base ring-1 ring-borde">{documento.aviso}</p>}
+
       {leidas ? (
         <div className="rounded-xl bg-primario/10 px-4 py-4">
           <p className="text-base text-texto-suave">{cuantas > 1 ? "Suma de las facturas marcadas" : "Importe total"}</p>
@@ -138,7 +141,7 @@ function TarjetaFactura({ org, documento, hoy }: { org: string; documento: Docum
         </p>
       )}
 
-      <form action={aprobar} className="flex flex-col gap-5">
+      <form noValidate onSubmit={(e) => enviar(e, aprobar)} className="flex flex-col gap-5">
         <input type="hidden" name="org" value={org} />
         <input type="hidden" name="documento" value={documento.id} />
         <input type="hidden" name="cantidad" value={facturas.length} />
@@ -146,7 +149,8 @@ function TarjetaFactura({ org, documento, hoy }: { org: string; documento: Docum
         {leidas && (
           <ul className="flex flex-col gap-2">
             {facturas.map((f, i) => {
-              const cuadra = documento.lector === "ia" && f.proveedor && f.fecha && f.importe && facturaFiable(f, hoy);
+              const cuadra = documento.lector === "ia" && !documento.lectorDebil && f.proveedor && f.fecha && f.importe && facturaFiable(f, hoy);
+              const fechaFutura = Boolean(fechas[i] && fechas[i] > hoy);
               return (
                 <li key={i}>
                   <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-borde px-4 py-3">
@@ -164,19 +168,26 @@ function TarjetaFactura({ org, documento, hoy }: { org: string; documento: Docum
                     <span className="flex min-w-0 flex-1 flex-col">
                       <span className="truncate text-base font-semibold">{f.proveedor ?? "Proveedor sin leer"}</span>
                       <span className="text-sm text-texto-suave">
-                        {f.fecha ? fechaLarga(f.fecha) : "Sin fecha"} · {f.categoria}
+                        {fechas[i] ? fechaLarga(fechas[i]) : "Sin fecha"} · {f.categoria}
                         {f.numero ? ` · Nº ${f.numero}` : ""}
                         {f.lineas.length > 0 ? ` · ${f.lineas.length} productos` : ""}
                       </span>
                       {documento.repetidas[i] && (
                         <span className="text-sm font-semibold text-peligro">
-                          Parece que ya la tienes registrada. Si la marcas, se contará dos veces.
+                          {facturas.length > 1
+                            ? "Parece que ya la tienes registrada. Si la marcas, se contará dos veces."
+                            : "Parece que ya la tienes registrada. Si la metes otra vez, se contará dos veces."}
+                        </span>
+                      )}
+                      {fechaFutura && (
+                        <span className="text-sm font-semibold text-peligro">
+                          La fecha leída es futura: corrígela en «Corregir algún dato» antes de meterla.
                         </span>
                       )}
                       <span className={`text-sm ${cuadra ? "text-exito" : "text-peligro"}`}>
                         {cuadra
                           ? "✓ Datos completos"
-                          : documento.lector === "ia"
+                          : documento.lector === "ia" && !documento.lectorDebil
                             ? "Revisa los datos"
                             : "Lectura básica: comprueba el importe en el documento"}
                       </span>
@@ -229,7 +240,14 @@ function TarjetaFactura({ org, documento, hoy }: { org: string; documento: Docum
                       <Etiqueta htmlFor={`fecha-${id}`} className="text-base">
                         Fecha
                       </Etiqueta>
-                      <Campo id={`fecha-${id}`} type="date" name={`fecha_${i}`} max={hoy} defaultValue={f.fecha ?? (leidas ? "" : hoy)} className="h-12" />
+                      <Campo
+                        id={`fecha-${id}`}
+                        type="date"
+                        name={`fecha_${i}`}
+                        value={fechas[i]}
+                        onChange={(e) => setFechas((a) => a.map((v, j) => (j === i ? e.target.value : v)))}
+                        className={`h-12 ${fechas[i] && fechas[i] > hoy ? "border-peligro" : ""}`}
+                      />
                     </div>
                     <div className="flex flex-col gap-1.5">
                       <Etiqueta htmlFor={`categoria-${id}`} className="text-base">
@@ -300,8 +318,8 @@ function TarjetaIngresos({
   locales: Local[];
   hoy: string;
 }) {
-  const [estadoAprobar, aprobar, aprobando] = useActionState<EstadoBandeja, FormData>(aprobarIngresos, {});
-  const [estadoDescartar, descartar, descartando] = useActionState<EstadoBandeja, FormData>(descartarParte, {});
+  const [estadoAprobar, aprobar, aprobando] = useActionState<EstadoBandeja, FormData>(aprobarIngresosSeguro, {});
+  const [estadoDescartar, descartar, descartando] = useActionState<EstadoBandeja, FormData>(descartarParteSeguro, {});
   const dias = documento.ingresos;
   const [incluidos, setIncluidos] = useState<boolean[]>(() => dias.map((d) => d.fecha <= hoy));
   const [ventas, setVentas] = useState<string[]>(() => dias.map((d) => coma(d.venta)));
@@ -331,7 +349,7 @@ function TarjetaIngresos({
       <Tarjeta className="flex flex-col gap-2">
         <p className="text-xl font-semibold">Ingresos descartados</p>
         <p className="text-base text-texto-suave">
-          Los ingresos de {documento.nombre} no se han metido. Si cambias de idea, vuelve a subir el archivo.
+          Los ingresos de {documento.nombre} no se han metido. Si cambias de idea, los tienes en «Descartados», más abajo.
         </p>
       </Tarjeta>
     );
@@ -345,12 +363,14 @@ function TarjetaIngresos({
         <p className="text-sm text-texto-suave">Subido {documento.recibido}</p>
       </div>
 
+      {documento.aviso && <p className="rounded-xl bg-fondo px-4 py-3 text-base ring-1 ring-borde">{documento.aviso}</p>}
+
       <div className="rounded-xl bg-primario/10 px-4 py-4">
         <p className="text-base text-texto-suave">{cuantos} días marcados · suman</p>
         <p className="text-4xl font-bold tabular-nums">{euros(total)}</p>
       </div>
 
-      <form action={aprobar} className="flex flex-col gap-5">
+      <form noValidate onSubmit={(e) => enviar(e, aprobar)} className="flex flex-col gap-5">
         <input type="hidden" name="org" value={org} />
         <input type="hidden" name="documento" value={documento.id} />
         <input type="hidden" name="cantidad" value={dias.length} />
@@ -436,134 +456,6 @@ function TarjetaIngresos({
         </button>
         {verDocumento && <VistaPrevia url={documento.url} tipo={documento.tipoArchivo} nombre={documento.nombre} />}
       </div>
-    </Tarjeta>
-  );
-}
-
-function TarjetaCierre({
-  org,
-  documento,
-  locales,
-  hoy,
-}: {
-  org: string;
-  documento: DocumentoPendiente;
-  locales: Local[];
-  hoy: string;
-}) {
-  const [estadoAprobar, aprobar, aprobando] = useActionState<EstadoBandeja, FormData>(aprobarCierre, {});
-  const [estadoDescartar, descartar, descartando] = useActionState<EstadoBandeja, FormData>(
-    descartarDocumento,
-    {},
-  );
-  const leido = documento.leido.venta !== undefined;
-
-  return (
-    <Tarjeta className="flex flex-col gap-5">
-      <div className="flex flex-col gap-1">
-        <h2 className="font-semibold">Ticket de cierre</h2>
-        <p className="text-sm text-texto-suave">
-          {documento.nombre} · {documento.recibido}
-        </p>
-      </div>
-
-      <VistaPrevia url={documento.url} tipo={documento.tipoArchivo} nombre={documento.nombre} />
-
-      <form action={aprobar} className="flex flex-col gap-4">
-        <input type="hidden" name="org" value={org} />
-        <input type="hidden" name="documento" value={documento.id} />
-        {locales.length === 1 && <input type="hidden" name="local" value={locales[0].id} />}
-
-        <p className="text-sm text-texto-suave">
-          {leido
-            ? "Esto es lo que he leído del ticket. Compruébalo antes de meterlo."
-            : "No he podido leer este ticket. Escribe la venta mirando el documento."}
-        </p>
-
-        {locales.length > 1 && (
-          <div className="flex flex-col gap-1.5">
-            <Etiqueta htmlFor={`local-${documento.id}`}>Local</Etiqueta>
-            <select
-              id={`local-${documento.id}`}
-              name="local"
-              className="h-11 rounded-lg border border-borde bg-superficie px-3 text-base"
-              required
-            >
-              {locales.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.nombre}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
-
-        <div className="flex flex-col gap-1.5">
-          <Etiqueta htmlFor={`fecha-${documento.id}`}>Día del cierre</Etiqueta>
-          <Campo
-            id={`fecha-${documento.id}`}
-            type="date"
-            name="fecha"
-            max={hoy}
-            defaultValue={documento.leido.fecha ?? hoy}
-            required
-          />
-        </div>
-
-        <div className="flex flex-col gap-1.5">
-          <Etiqueta htmlFor={`venta-${documento.id}`} className="text-base">
-            Venta del día (€)
-          </Etiqueta>
-          <Campo
-            id={`venta-${documento.id}`}
-            name="venta"
-            inputMode="decimal"
-            autoComplete="off"
-            defaultValue={coma(documento.leido.venta)}
-            className="h-14 text-2xl font-semibold"
-            required
-          />
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          <div className="flex flex-col gap-1.5">
-            <Etiqueta htmlFor={`efectivo-${documento.id}`}>Efectivo (€)</Etiqueta>
-            <Campo
-              id={`efectivo-${documento.id}`}
-              name="efectivo"
-              inputMode="decimal"
-              autoComplete="off"
-              defaultValue={coma(documento.leido.efectivo)}
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Etiqueta htmlFor={`banco-${documento.id}`}>Tarjeta (€)</Etiqueta>
-            <Campo
-              id={`banco-${documento.id}`}
-              name="banco"
-              inputMode="decimal"
-              autoComplete="off"
-              defaultValue={coma(documento.leido.banco)}
-            />
-          </div>
-        </div>
-
-        <Aviso>{estadoAprobar.error}</Aviso>
-        <Boton type="submit" disabled={aprobando || descartando} className="h-14 text-base">
-          {aprobando ? "Metiendo…" : "Meter en el cierre"}
-        </Boton>
-      </form>
-
-      <form action={descartar} className="flex flex-col gap-2">
-        <input type="hidden" name="org" value={org} />
-        <input type="hidden" name="documento" value={documento.id} />
-        <Aviso>{estadoDescartar.error}</Aviso>
-        <Boton type="submit" variante="secundario" disabled={aprobando || descartando}>
-          {descartando ? "Descartando…" : "Descartar, no meter"}
-        </Boton>
-      </form>
-
-      <CambiarTipo org={org} id={documento.id} a="factura" />
     </Tarjeta>
   );
 }

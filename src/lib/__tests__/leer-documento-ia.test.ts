@@ -72,6 +72,15 @@ describe("facturaFiable", () => {
   it("rechaza líneas que no cuadran", () => {
     expect(facturaFiable({ ...base, lineas: [linea(12), linea(3)] }, "2026-09-30")).toBe(false);
   });
+  it("un abono (importe negativo) también puede cuadrar", () => {
+    const abono: FacturaDatos = { ...base, importe: -22, base: -20, lineas: [linea(-12), linea(-8)] };
+    expect(facturaFiable(abono, "2026-09-30")).toBe(true);
+    expect(facturaFiable({ ...abono, lineas: [linea(-12), linea(-3)] }, "2026-09-30")).toBe(false);
+    expect(facturaFiable({ ...base, importe: 0 }, "2026-09-30")).toBe(false);
+    // Importe positivo con líneas negativas (o al revés): contradictorio, no se da por bueno.
+    expect(facturaFiable({ ...base, importe: 22, base: undefined, lineas: [linea(-22)] }, "2026-09-30")).toBe(false);
+    expect(facturaFiable({ ...base, importe: -22, base: undefined, lineas: [linea(22)] }, "2026-09-30")).toBe(false);
+  });
   it("rechaza lo incompleto o con fecha futura", () => {
     expect(facturaFiable({ ...base, proveedor: undefined }, "2026-09-30")).toBe(false);
     expect(facturaFiable({ ...base, fecha: undefined }, "2026-09-30")).toBe(false);
@@ -122,13 +131,22 @@ describe("leerDocumentoConIA con Gemini", () => {
   it("repite sin desactivar el razonamiento si da error 400", async () => {
     const fetchFalso = vi
       .fn()
-      .mockResolvedValueOnce(new Response("{}", { status: 400 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "Budget 0 is invalid. This model only works in thinking mode." } }), { status: 400 }))
       .mockResolvedValueOnce(respuestaGemini(dosFacturas));
     vi.stubGlobal("fetch", fetchFalso);
     const lectura = await leerDocumentoConIA(entrada);
     expect(lectura.documento?.facturas).toHaveLength(2);
     expect(JSON.parse(fetchFalso.mock.calls[0][1].body as string).generationConfig.thinkingConfig).toBeDefined();
     expect(JSON.parse(fetchFalso.mock.calls[1][1].body as string).generationConfig.thinkingConfig).toBeUndefined();
+  });
+
+  it("un error 400 que no habla del razonamiento no se repite", async () => {
+    const fetchFalso = vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: { message: "Request payload size exceeds the limit" } }), { status: 400 }));
+    vi.stubGlobal("fetch", fetchFalso);
+    const lectura = await leerDocumentoConIA(entrada);
+    expect(lectura.documento).toBeNull();
+    expect(lectura.transitorio).toBe(false);
+    expect(fetchFalso).toHaveBeenCalledTimes(1);
   });
 
   it("explica el motivo si la API falla", async () => {
@@ -146,6 +164,129 @@ describe("leerDocumentoConIA con Gemini", () => {
 
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("{}", { status: 403 })));
     expect((await leerDocumentoConIA(entrada)).transitorio).toBe(false);
+  });
+});
+
+describe("leerDocumentoConIA: cuando Google falla", () => {
+  const claves = ["GEMINI_API_KEY", "ANTHROPIC_API_KEY", "NVIDIA_API_KEY", "GEMINI_MODELO"] as const;
+  beforeEach(() => {
+    for (const c of claves) delete process.env[c];
+    process.env.GEMINI_API_KEY = "clave-de-prueba";
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    for (const c of claves) delete process.env[c];
+  });
+  const entrada = { texto: "", imagenes: [], archivo: { bytes: new Uint8Array([37, 80, 68, 70]), tipo: "application/pdf" } };
+  const cupoDelDia = () =>
+    new Response(
+      JSON.stringify({ error: { message: "quota", details: [{ violations: [{ quotaId: "GenerateRequestsPerDayPerProjectPerModel-FreeTier" }] }] } }),
+      { status: 429 },
+    );
+
+  it("si el cupo del día se agota en unos modelos y el último da 404, sigue siendo un fallo pasajero (no una tarjeta vacía)", async () => {
+    let llamada = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(async () => (++llamada <= 2 ? cupoDelDia() : new Response(JSON.stringify({ error: { message: "not found" } }), { status: 404 }))),
+    );
+    const lectura = await leerDocumentoConIA(entrada);
+    expect(lectura.documento).toBeNull();
+    expect(lectura.transitorio).toBe(true);
+    expect(lectura.causa).toBe("dia");
+  });
+
+  it("una clave de Claude caducada no esconde que Gemini solo está saturado", async () => {
+    process.env.ANTHROPIC_API_KEY = "caducada";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(async (url: string) =>
+        url.includes("anthropic") ? new Response("{}", { status: 401 }) : cupoDelDia(),
+      ),
+    );
+    const lectura = await leerDocumentoConIA(entrada);
+    expect(lectura.transitorio).toBe(true);
+  });
+
+  it("un 503 sostenido pasa a otro modelo en vez de insistir diez veces con el mismo", async () => {
+    const fetchFalso = vi.fn().mockImplementation(async (url: string) =>
+      url.includes("gemini-2.5-flash:") ? new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ tipo: "facturas", facturas: [{ proveedor: "Puleva", total: 5, categoria: "Materia prima" }] }) }] } }] }), { status: 200 }) : new Response("{}", { status: 503 }),
+    );
+    vi.stubGlobal("fetch", fetchFalso);
+    const lectura = await leerDocumentoConIA(entrada, 60_000);
+    expect(lectura.documento?.facturas).toHaveLength(1);
+    expect(lectura.modelo).toBe("gemini-2.5-flash");
+    expect(fetchFalso.mock.calls.length).toBeLessThanOrEqual(4);
+  });
+
+  it("no llama a Gemini si el archivo es demasiado grande y no hay nada más que enviarle", async () => {
+    const fetchFalso = vi.fn();
+    vi.stubGlobal("fetch", fetchFalso);
+    const grande = { texto: "", imagenes: [], archivo: { bytes: new Uint8Array(15 * 1024 * 1024), tipo: "image/jpeg" } };
+    const lectura = await leerDocumentoConIA(grande);
+    expect(lectura.documento).toBeNull();
+    expect(lectura.motivo).toMatch(/demasiado grande/);
+    expect(fetchFalso).not.toHaveBeenCalled();
+  });
+
+  it("si la respuesta se corta por ser demasiado larga, lo dice", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response(JSON.stringify({ candidates: [{ finishReason: "MAX_TOKENS", content: { parts: [{ text: '{"tipo":"facturas","facturas":[{"proveedor":"X' }] } }] }), { status: 200 })),
+    );
+    const lectura = await leerDocumentoConIA(entrada);
+    expect(lectura.documento).toBeNull();
+    expect(lectura.motivo).toMatch(/demasiado larga/);
+  });
+});
+
+describe("documentoDesdeRespuesta: respuestas con otro formato", () => {
+  it("entiende importes, fechas y números escritos como texto, y la categoría sin mirar mayúsculas ni tildes", () => {
+    const d = documentoDesdeRespuesta({
+      tipo: "facturas",
+      facturas: [
+        {
+          proveedor: "Hogar Hotel",
+          numero: 6982,
+          fecha: "28/08/2026",
+          total: "1.234,56",
+          base_imponible: "1.020,30 €",
+          categoria: "nominas",
+          lineas: [{ descripcion: "Sábanas", cantidad: "3", precio_unitario: "10,5", importe: "31,50" }],
+        },
+      ],
+    });
+    expect(d?.facturas[0]).toMatchObject({ numero: "6982", fecha: "2026-08-28", importe: 1234.56, base: 1020.3, categoria: "Nóminas" });
+    expect(d?.facturas[0].lineas[0]).toMatchObject({ cantidad: 3, precio_unitario: 10.5, importe: 31.5 });
+  });
+
+  it("un abono escrito entre paréntesis queda en negativo", () => {
+    const d = documentoDesdeRespuesta({ tipo: "facturas", facturas: [{ proveedor: "X", fecha: "2026-09-01", total: "(121,00)" }] });
+    expect(d?.facturas[0].importe).toBe(-121);
+  });
+
+  it("los días de una hoja de ingresos pueden venir como dd/mm/aaaa", () => {
+    expect(ingresosDesdeRespuesta([{ fecha: "01/10/2026", venta: "331,80" }])).toEqual([{ fecha: "2026-10-01", venta: 331.8 }]);
+  });
+
+  it("avisa cuando el archivo trae más facturas de las que se leen", () => {
+    const muchas = Array.from({ length: 31 }, (_, i) => ({ proveedor: `P${i}`, total: 10, fecha: "2026-09-01" }));
+    const d = documentoDesdeRespuesta({ tipo: "facturas", facturas: muchas });
+    expect(d?.facturas).toHaveLength(30);
+    expect(d?.avisos?.join(" ")).toMatch(/más de 30 facturas/);
+  });
+
+  it("avisa (una sola vez) cuando una factura trae más líneas de las que se leen", () => {
+    const lineas = Array.from({ length: 81 }, (_, i) => ({ descripcion: `L${i}`, cantidad: 1, precio_unitario: 1, importe: 1 }));
+    const d = documentoDesdeRespuesta({
+      tipo: "facturas",
+      facturas: [
+        { proveedor: "A", total: 81, fecha: "2026-09-01", lineas },
+        { proveedor: "B", total: 81, fecha: "2026-09-02", lineas },
+      ],
+    });
+    expect(d?.facturas[0].lineas).toHaveLength(80);
+    expect(d?.avisos?.filter((a) => a.includes("líneas"))).toHaveLength(1);
   });
 });
 

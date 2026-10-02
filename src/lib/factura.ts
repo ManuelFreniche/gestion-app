@@ -41,16 +41,18 @@ const PROVEEDORES_CONOCIDOS: [RegExp, string, Categoria][] = [
 ];
 
 const IMPORTE = String.raw`(-?\d{1,3}(?:[.,]\d{3})*[.,]\d{2}|-?\d+[.,]\d{2})`;
+// Detrás de la palabra "total" también se admite el espacio como separador de miles ("1 581,00 €").
+const IMPORTE_TOTAL = String.raw`(-?\d{1,3}(?:[.,\u00a0 ]\d{3})*[.,]\d{2}|-?\d+[.,]\d{2})`;
 
 // Patrones de "total", por orden de prioridad (gana el primero que aparezca).
 const PATRONES_TOTAL = [
-  String.raw`total\s+a\s+pagar[:\s]*${IMPORTE}`,
-  String.raw`total\s+impuestos\s+inclu[ií]dos[:\s]*${IMPORTE}`,
-  String.raw`total\s+factura[:\s]*${IMPORTE}`,
-  String.raw`total\s+eur(?:os)?[:\s]*${IMPORTE}`,
-  String.raw`total\s+t[il]i?\s*\(eur\)[:\s]*${IMPORTE}`,
-  String.raw`total[:\s]+${IMPORTE}\s*€`,
-  String.raw`importe\s+total[:\s]*${IMPORTE}`,
+  String.raw`total\s+a\s+pagar[:\s]*${IMPORTE_TOTAL}`,
+  String.raw`total\s+impuestos\s+inclu[ií]dos[:\s]*${IMPORTE_TOTAL}`,
+  String.raw`total\s+factura[:\s]*${IMPORTE_TOTAL}`,
+  String.raw`total\s+eur(?:os)?[:\s]*${IMPORTE_TOTAL}`,
+  String.raw`total\s+t[il]i?\s*\(eur\)[:\s]*${IMPORTE_TOTAL}`,
+  String.raw`total[:\s]+${IMPORTE_TOTAL}\s*€`,
+  String.raw`importe\s+total[:\s]*${IMPORTE_TOTAL}`,
 ];
 
 export function quitarTildes(texto: string): string {
@@ -59,7 +61,7 @@ export function quitarTildes(texto: string): string {
 
 // "1.234,56" o "1234.56" → 1234.56
 export function limpiarImporte(texto: string): number | null {
-  let t = texto.trim();
+  let t = texto.replace(/[\s\u00a0]/g, "");
   if (t.includes(",") && t.includes(".")) {
     // El último separador es el decimal.
     t = t.lastIndexOf(",") > t.lastIndexOf(".") ? t.replace(/\./g, "").replace(",", ".") : t.replace(/,/g, "");
@@ -73,13 +75,17 @@ export function limpiarImporte(texto: string): number | null {
 export function detectarProveedor(texto: string): { nombre: string; categoria: Categoria } | null {
   const plano = quitarTildes(texto.toLowerCase());
   for (const [patron, nombre, categoria] of PROVEEDORES_CONOCIDOS) {
-    if (patron.test(plano)) return { nombre, categoria };
+    if (!patron.test(plano)) continue;
+    // El casero del local también es proveedor de mercancía: su recibo del alquiler no es materia prima.
+    if (/gimenez\s+asnar/.test(plano) && /alquiler|arrendamiento/.test(plano)) return { nombre, categoria: "Alquiler" };
+    return { nombre, categoria };
   }
   return null;
 }
 
 export function detectarTotal(texto: string): number | null {
-  const bajo = texto.toLowerCase();
+  // Un abono se imprime a veces con el total entre paréntesis: "TOTAL (121,00) €" es -121,00.
+  const bajo = texto.toLowerCase().replace(/\(\s*(\d[\d.,\u00a0 ]*\d)\s*\)/g, "-$1");
   for (const patron of PATRONES_TOTAL) {
     const m = bajo.match(new RegExp(patron));
     const valor = m ? limpiarImporte(m[1]) : null;
@@ -87,7 +93,9 @@ export function detectarTotal(texto: string): number | null {
   }
   // Red de seguridad 1: número junto a "total" aunque no lleve el símbolo €
   // (sin confundirlo con la base imponible).
-  for (const m of bajo.matchAll(new RegExp(String.raw`total[^\d\n]{0,15}${IMPORTE}`, "g"))) {
+  for (const m of bajo.matchAll(new RegExp(String.raw`total[^\d\n]{0,15}${IMPORTE_TOTAL}`, "g"))) {
+    // "Total IVA 0,80" o "Total cuota 0,80" no son el total de la factura.
+    if (/^total\s*(iva|i\.v\.a|cuota|impuestos?|retenci)/.test(m[0])) continue;
     const inicio = Math.max(0, (m.index ?? 0) - 25);
     const salto = bajo.lastIndexOf("\n", m.index ?? 0);
     const contexto = bajo.slice(Math.max(inicio, salto + 1), (m.index ?? 0) + m[0].length);
@@ -179,8 +187,20 @@ export function facturaDesdeReglas(l: FacturaLeida): FacturaDatos {
 
 // Identifica una factura para detectar repetidas: proveedor, número y fecha. Sin los tres no hay
 // forma fiable de saber si ya existe, así que devuelve null.
+// El proveedor se compara sin mayúsculas, tildes, puntuación ni forma societaria: "AFICOS ABOGADOS Y ASESORES S.L."
+// y "Aficos Abogados y Asesores SL" son el mismo.
+function proveedorNormalizado(nombre?: string | null): string | undefined {
+  const t = quitarTildes((nombre ?? "").toLowerCase())
+    .replace(/[.,;:()"']/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\s(s ?l ?u?|s ?a ?u?|s ?l ?l|s ?coop|c ?b)$/, "")
+    .trim();
+  return t || undefined;
+}
+
 export function claveFactura(f: { proveedor?: string | null; numero?: string | null; fecha?: string | null }): string | null {
-  const proveedor = f.proveedor?.trim().toLowerCase().replace(/\s+/g, " ");
+  const proveedor = proveedorNormalizado(f.proveedor);
   const numero = f.numero?.trim().toLowerCase();
   if (!proveedor || !numero || !f.fecha) return null;
   return `${proveedor}|${numero}|${f.fecha}`;
@@ -189,13 +209,19 @@ export function claveFactura(f: { proveedor?: string | null; numero?: string | n
 // Una factura se mete sola solo si está completa y las líneas cuadran con la base o el total.
 // Si algo no cuadra, queda en la bandeja para revisarla.
 export function facturaFiable(f: FacturaDatos, hoy: string): boolean {
-  if (!f.proveedor?.trim() || !f.fecha || f.fecha > hoy || !f.importe || f.importe <= 0) return false;
+  // Un abono (importe negativo) se comprueba igual que una factura, con los importes en positivo.
+  if (!f.proveedor?.trim() || !f.fecha || f.fecha > hoy || !f.importe) return false;
   if (f.lineas.length === 0) return true;
-  const suma = f.lineas.reduce((t, l) => t + l.importe, 0);
+  const sumaConSigno = f.lineas.reduce((t, l) => t + l.importe, 0);
+  // Un importe positivo con líneas negativas (o al revés) es una lectura contradictoria, no un abono.
+  if (sumaConSigno !== 0 && Math.sign(sumaConSigno) !== Math.sign(f.importe)) return false;
+  const importe = Math.abs(f.importe);
+  const suma = Math.abs(sumaConSigno);
+  const base = f.base === undefined ? undefined : Math.abs(f.base);
   const margen = 0.05 + 0.01 * f.lineas.length;
-  if (f.base !== undefined && Math.abs(suma - f.base) <= margen) return true;
-  if (Math.abs(suma - f.importe) <= margen) return true;
-  return f.base === undefined && suma <= f.importe + margen;
+  if (base !== undefined && Math.abs(suma - base) <= margen) return true;
+  if (Math.abs(suma - importe) <= margen) return true;
+  return base === undefined && suma <= importe + margen;
 }
 
 // Sin IA, un PDF con varias facturas se separa por páginas: cada página con total y número o fecha
