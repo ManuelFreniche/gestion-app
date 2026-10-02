@@ -1,14 +1,14 @@
 import { notFound } from "next/navigation";
 import { Tarjeta } from "@/components/ui";
 import { euros, fechaLarga } from "@/lib/cierre";
-import { quitarTildes } from "@/lib/factura";
 import { exigirPermiso } from "@/lib/negocio";
 import { crearClienteServidor } from "@/lib/supabase/server";
 import { marcarPago } from "./acciones";
 import { BotonBorrar } from "./boton-borrar";
+import { MarcarTodasPagadas } from "./marcar-todas";
 
-// Facturas recibidas de proveedores, las que se han metido desde la bandeja, y el último precio
-// de cada producto por proveedor para ir comparando.
+// Facturas recibidas de proveedores, las que se han metido desde la bandeja. Los precios por producto
+// están en el Excel de Gastos.
 export default async function PaginaFacturas({ params }: PageProps<"/n/[org]/facturas">) {
   const { org } = await params;
   const negocio = await exigirPermiso(org, "facturas.ver");
@@ -16,7 +16,7 @@ export default async function PaginaFacturas({ params }: PageProps<"/n/[org]/fac
 
   const puedeEditar = negocio.permisos.has("facturas.editar");
   const supabase = await crearClienteServidor();
-  const [facturasRes, lineasRes] = await Promise.all([
+  const [facturasRes, pendientesRes] = await Promise.all([
     supabase
       .from("facturas_recibidas")
       .select("id, proveedor, numero, fecha, importe, categoria, estado_pago")
@@ -24,37 +24,30 @@ export default async function PaginaFacturas({ params }: PageProps<"/n/[org]/fac
       .order("fecha", { ascending: false })
       .limit(100),
     supabase
-      .from("facturas_lineas")
-      .select("factura_id, descripcion, cantidad, unidad, precio_unitario, importe, facturas_recibidas!inner(proveedor, fecha)")
+      .from("facturas_recibidas")
+      .select("id", { count: "exact", head: true })
       .eq("organizacion_id", org)
-      .order("fecha", { referencedTable: "facturas_recibidas", ascending: false })
-      .limit(1000),
+      .eq("estado_pago", "pendiente"),
   ]);
 
   const facturas = facturasRes.data ?? [];
-  const lineas = lineasRes.data ?? [];
+  const pendientes = pendientesRes.count ?? 0;
   const pendiente = facturas.filter((f) => f.estado_pago === "pendiente").reduce((t, f) => t + f.importe, 0);
   const total = facturas.reduce((t, f) => t + f.importe, 0);
 
-  const lineasDe = new Map<string, typeof lineas>();
-  for (const l of lineas) lineasDe.set(l.factura_id, [...(lineasDe.get(l.factura_id) ?? []), l]);
-
-  // Último precio de cada producto por proveedor (las líneas ya vienen de la más reciente a la más antigua).
-  const precioUnidad = (l: (typeof lineas)[number]) =>
-    l.precio_unitario ?? (l.cantidad ? Math.round((l.importe / l.cantidad) * 10_000) / 10_000 : null);
-  const productos = new Map<string, { nombre: string; precios: Map<string, { precio: number; unidad: string | null; fecha: string }> }>();
-  for (const l of lineas) {
-    const precio = precioUnidad(l);
-    if (precio === null) continue;
-    const clave = quitarTildes(l.descripcion.toLowerCase()).replace(/\s+/g, " ").trim();
-    const producto = productos.get(clave) ?? { nombre: l.descripcion, precios: new Map() };
-    const proveedor = l.facturas_recibidas.proveedor;
-    if (!producto.precios.has(proveedor)) producto.precios.set(proveedor, { precio, unidad: l.unidad, fecha: l.facturas_recibidas.fecha });
-    productos.set(clave, producto);
-  }
-  const comparables = [...productos.values()]
-    .sort((a, b) => b.precios.size - a.precios.size || a.nombre.localeCompare(b.nombre))
-    .slice(0, 40);
+  // Los productos de cada factura que se ve (solo de esas, para no pedir de más).
+  const { data: lineasBd } = facturas.length
+    ? await supabase
+        .from("facturas_lineas")
+        .select("factura_id, descripcion, cantidad, unidad, importe")
+        .eq("organizacion_id", org)
+        .in(
+          "factura_id",
+          facturas.map((f) => f.id),
+        )
+    : { data: [] };
+  const lineasDe = new Map<string, NonNullable<typeof lineasBd>>();
+  for (const l of lineasBd ?? []) lineasDe.set(l.factura_id, [...(lineasDe.get(l.factura_id) ?? []), l]);
 
   return (
     <div className="mx-auto flex w-full max-w-xl flex-col gap-6">
@@ -76,28 +69,7 @@ export default async function PaginaFacturas({ params }: PageProps<"/n/[org]/fac
         </Tarjeta>
       )}
 
-      {comparables.length > 0 && (
-        <Tarjeta className="flex flex-col gap-3">
-          <h2 className="font-semibold">Precios por producto</h2>
-          <p className="text-sm text-texto-suave">El último precio de cada proveedor, sin IVA. El más barato va en negrita.</p>
-          <ul className="flex flex-col gap-3">
-            {comparables.map((p) => {
-              const filas = [...p.precios.entries()].sort((a, b) => a[1].precio - b[1].precio);
-              return (
-                <li key={p.nombre} className="flex flex-col gap-1">
-                  <span className="font-medium">{p.nombre}</span>
-                  {filas.map(([proveedor, dato], i) => (
-                    <span key={proveedor} className={`text-sm ${i === 0 && filas.length > 1 ? "font-semibold" : "text-texto-suave"}`}>
-                      {proveedor}: {dato.precio.toLocaleString("es-ES", { maximumFractionDigits: 4 })} €{dato.unidad ? ` / ${dato.unidad}` : ""} ·{" "}
-                      {fechaLarga(dato.fecha)}
-                    </span>
-                  ))}
-                </li>
-              );
-            })}
-          </ul>
-        </Tarjeta>
-      )}
+      {puedeEditar && pendientes > 0 && <MarcarTodasPagadas org={org} pendientes={pendientes} />}
 
       {facturas.length === 0 ? (
         <Tarjeta>
