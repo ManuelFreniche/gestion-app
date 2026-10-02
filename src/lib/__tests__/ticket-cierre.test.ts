@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { leerTicketCierre, ticketCoherente } from "../ticket-cierre";
+import { cuadraConCobrado, leerTicketCierre, ticketCoherente } from "../ticket-cierre";
 
 // Texto tal como sale de un ticket real de cierre (Estado de la caja).
 const TICKET = `ESTADO DE LA CAJA
@@ -65,5 +65,15 @@ describe("ticketCoherente", () => {
     expect(ticketCoherente({ venta: 136.7, efectivo: 10.8, banco: 125.9 })).toBe(true);
     expect(ticketCoherente({ venta: 6.51, efectivo: 125.9, banco: 0 })).toBe(false);
     expect(ticketCoherente({ venta: 50, efectivo: null, banco: null })).toBe(true);
+  });
+});
+
+describe("cuadraConCobrado", () => {
+  it("la venta debe coincidir con el total cobrado", () => {
+    expect(cuadraConCobrado(TICKET, { venta: 136.7 })).toBe(true);
+    expect(cuadraConCobrado(TICKET, { venta: 6.51 })).toBe(false);
+  });
+  it("sin total cobrado no puede comprobarse y se acepta", () => {
+    expect(cuadraConCobrado("Total Tickets 10,00", { venta: 10 })).toBe(true);
   });
 });

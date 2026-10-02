@@ -53,3 +53,13 @@ export function ticketCoherente(t: Pick<TicketCierre, "venta" | "efectivo" | "ba
   if (t.efectivo === null && t.banco === null) return true;
   return t.venta + 0.05 >= (t.efectivo ?? 0) + (t.banco ?? 0);
 }
+
+// El ticket trae "Total Cobrado": debe coincidir con la venta (más lo pendiente de cobro). Si el
+// texto del PDF llega desordenado, las cifras no cuadran y se descarta la lectura por reglas.
+export function cuadraConCobrado(textoPdf: string, t: Pick<TicketCierre, "venta">): boolean {
+  const texto = textoPdf.replace(/\s+/g, " ");
+  const cobrado = valorDe(texto, "Total Cobrado");
+  if (cobrado === null) return true;
+  const pendientes = valorDe(texto, "Tickets Pendientes") ?? 0;
+  return Math.abs(t.venta - cobrado - pendientes) <= 0.05;
+}

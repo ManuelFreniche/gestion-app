@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { extractText, getDocumentProxy } from "unpdf";
 import { euros } from "./cierre";
 import { facturaDesdeReglas, leerFactura, leerFacturasPorPaginas, type FacturaDatos } from "./factura";
 import { esModeloLigero, hayIA, leerDocumentoConIA, type IngresoDia } from "./leer-documento-ia";
+import { textoPorLineas } from "./pdf-lineas";
 import { crearClienteServidor } from "./supabase/server";
-import { leerTicketCierre, ticketCoherente, type TicketCierre } from "./ticket-cierre";
+import { cuadraConCobrado, leerTicketCierre, ticketCoherente, type TicketCierre } from "./ticket-cierre";
 
 // Resultado de subir un documento: si se leyó bien, el cierre o las facturas se meten solos.
 export type ResultadoSubida = {
@@ -17,10 +17,7 @@ export type ResultadoSubida = {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 async function textoDelPdf(bytes: Uint8Array): Promise<string> {
-  // pdf.js se queda con el buffer que recibe: se le pasa una copia para poder reutilizar el original.
-  const pdf = await getDocumentProxy(new Uint8Array(bytes));
-  const { text } = await extractText(pdf, { mergePages: true });
-  return text;
+  return textoPorLineas(bytes);
 }
 
 const plural = (n: number, uno: string, varios: string) => `${n} ${n === 1 ? uno : varios}`;
@@ -96,7 +93,7 @@ export async function registrarDocumento(entrada: {
   }
 
   // Una lectura por reglas cuyas cifras no cuadran se descarta: se prueba con el lector de IA.
-  if (lectura && !ticketCoherente(lectura)) lectura = null;
+  if (lectura && (!ticketCoherente(lectura) || !cuadraConCobrado(textoLeido, lectura))) lectura = null;
   let sospechoso = false;
 
   let facturas: FacturaDatos[] = [];
@@ -193,6 +190,10 @@ export async function registrarDocumento(entrada: {
     datos.lector = lector;
   } else if (textoLeido.trim()) {
     // Para poder ver qué texto se leyó cuando el formato no se reconoce.
+    datos.texto_leido = textoLeido.replace(/\s+/g, " ").trim().slice(0, 1500);
+  }
+  // Para poder ver el texto que sacó el PDF si una lectura sale mal.
+  if (tipo === "cierre" && textoLeido.trim() && datos.texto_leido === undefined) {
     datos.texto_leido = textoLeido.replace(/\s+/g, " ").trim().slice(0, 1500);
   }
   if (motivoFallo) datos.motivo_ia = motivoFallo.slice(0, 300);
