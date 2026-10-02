@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { extractText, getDocumentProxy } from "unpdf";
-import { esFecha, euros, fechaLarga, hoyEn } from "./cierre";
+import { euros } from "./cierre";
 import { facturaDesdeReglas, leerFactura, leerFacturasPorPaginas, type FacturaDatos } from "./factura";
 import { esModeloLigero, hayIA, leerDocumentoConIA, type IngresoDia } from "./leer-documento-ia";
 import { crearClienteServidor } from "./supabase/server";
-import { leerTicketCierre, type TicketCierre } from "./ticket-cierre";
+import { leerTicketCierre, ticketCoherente, type TicketCierre } from "./ticket-cierre";
 
 // Resultado de subir un documento: si se leyó bien, el cierre o las facturas se meten solos.
 export type ResultadoSubida = {
@@ -95,6 +95,10 @@ export async function registrarDocumento(entrada: {
     }
   }
 
+  // Una lectura por reglas cuyas cifras no cuadran se descarta: se prueba con el lector de IA.
+  if (lectura && !ticketCoherente(lectura)) lectura = null;
+  let sospechoso = false;
+
   let facturas: FacturaDatos[] = [];
   let ingresos: IngresoDia[] = [];
   let motivoFallo: string | undefined;
@@ -113,7 +117,10 @@ export async function registrarDocumento(entrada: {
           `El lector de Google no ha podido leerlo ahora mismo (límite gratuito agotado, saturado o archivo muy largo). No se ha guardado nada: vuelve a intentarlo en unos minutos.${motivoFallo ? ` Motivo técnico: ${motivoFallo.slice(0, 200)}` : ""}`,
       };
     }
-    if (respuesta.documento?.ticket) lectura = respuesta.documento.ticket;
+    if (respuesta.documento?.ticket) {
+      lectura = respuesta.documento.ticket;
+      sospechoso = !ticketCoherente(lectura);
+    }
     else if (respuesta.documento) {
       facturas = respuesta.documento.facturas;
       ingresos = respuesta.documento.ingresos;
@@ -147,7 +154,9 @@ export async function registrarDocumento(entrada: {
     ingresos.length > 0 &&
     `${plural(ingresos.length, "día de ingresos", "días de ingresos")} · total ${euros(ingresos.reduce((t, d) => t + d.venta, 0))}.`;
   const aviso = lectura
-    ? undefined
+    ? sospechoso
+      ? "Las cifras del cierre no cuadran (la venta es menor que lo cobrado en efectivo y banco). Compruébalas con el PDF antes de meterlas."
+      : undefined
     : tipo === "factura" || tipo === "ingresos"
       ? [
           facturas.length > 0 &&
@@ -224,42 +233,7 @@ export async function registrarDocumento(entrada: {
 
   revalidatePath(`/n/${org}/bandeja`);
 
-  // Solo el ticket de cierre se mete solo. Las facturas las mete siempre una persona.
-  if (lectura !== null) {
-    const { data: fila } = await supabase
-      .from("documentos_entrantes")
-      .select("id")
-      .eq("organizacion_id", org)
-      .eq("huella", huella)
-      .maybeSingle();
-    if (!fila) return { estado: "pendiente" };
-
-    const [locales, ajustes] = await Promise.all([
-      supabase.from("locales").select("id").eq("organizacion_id", org),
-      supabase.from("ajustes_organizacion").select("zona_horaria").eq("organizacion_id", org).maybeSingle(),
-    ]);
-    const hoy = hoyEn(ajustes.data?.zona_horaria ?? "Europe/Madrid");
-
-    // Ticket de cierre: solo con la venta leída, el día conocido y un único local.
-    const fecha = typeof datos.fecha === "string" ? datos.fecha : entrada.fecha;
-    const venta = typeof datos.venta === "number" ? datos.venta : undefined;
-    if (tipo === "cierre" && venta !== undefined && esFecha(fecha) && locales.data?.length === 1 && fecha <= hoy) {
-      const { error: errorAprobar } = await supabase.rpc("aprobar_cierre", {
-        p_documento: fila.id,
-        p_local: locales.data[0].id,
-        p_fecha: fecha,
-        p_venta: venta,
-        ...(typeof datos.efectivo === "number" && { p_efectivo: datos.efectivo }),
-        ...(typeof datos.banco === "number" && { p_banco: datos.banco }),
-      });
-      if (!errorAprobar) {
-        revalidatePath(`/n/${org}/ventas`);
-        return { estado: "metido", detalle: `Metido en el cierre · ${fechaLarga(fecha)}: ${euros(venta)}` };
-      }
-      // Sin permiso para aprobar (p. ej. un empleado), queda pendiente de revisión.
-    }
-  }
-
+  // Nada se mete solo: ni facturas ni cierres. Una persona revisa y acepta cada cosa en la Bandeja.
   const detalle = [recuperado && "Lo habías descartado: lo he vuelto a poner en la bandeja.", aviso].filter(Boolean).join(" ");
   return { estado: "pendiente", ...(detalle && { detalle }) };
 }

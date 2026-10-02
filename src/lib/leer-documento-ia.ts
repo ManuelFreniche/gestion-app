@@ -219,7 +219,7 @@ export function documentoDesdeRespuesta(entrada: unknown): DocumentoIA | null {
 // todas las páginas, sin que el navegador prepare nada.
 // Cada modelo tiene su propio cupo gratuito: si se agota uno, se prueba el siguiente. El último es
 // el más ligero y menos exacto: se avisa en la bandeja cuando es el que ha leído.
-const MODELOS_GEMINI = ["gemini-flash-latest", "gemini-2.5-flash", "gemini-2.5-flash-lite"];
+const MODELOS_GEMINI = ["gemini-flash-latest", "gemini-2.5-flash", "gemini-3.5-flash-lite"];
 export const esModeloLigero = (modelo?: string) => Boolean(modelo && /lite/.test(modelo));
 
 // Qué cupo ha agotado Google: por minuto (basta esperar unos segundos), por día (hasta que
