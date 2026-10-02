@@ -104,4 +104,10 @@ Ticket/Factura Media 9,76`;
     expect(t).toMatchObject({ venta: 331.8, efectivo: 55.6, banco: 276.2, ticketMedio: 9.76 });
     expect(t && ticketCoherente(t) && cuadraConCobrado(REAL, t)).toBe(true);
   });
+
+  it("la fecha es la inicial aunque la final salga antes en el texto", () => {
+    const invertido = "Fecha final: 02/10/2026\nFecha inicial: 01/10/2026\n" + REAL;
+    expect(leerTicketCierre(invertido)?.fecha).toBe("2026-10-01");
+    expect(leerTicketCierre(REAL)?.fecha).toBe("2026-10-01");
+  });
 });
