@@ -92,6 +92,8 @@ export async function registrarDocumento(entrada: {
     }
   }
 
+  // Un PDF con esta pinta es el cierre de caja aunque no se haya podido leer: se guarda para revisarlo.
+  const pareceCierre = /total\s+tickets|estado\s+de\s+la\s+caja/i.test(textoLeido);
   // Una lectura por reglas cuyas cifras no cuadran se descarta: se prueba con el lector de IA.
   if (lectura && (!ticketCoherente(lectura) || !cuadraConCobrado(textoLeido, lectura))) lectura = null;
   let sospechoso = false;
@@ -105,7 +107,7 @@ export async function registrarDocumento(entrada: {
     const respuesta = await leerDocumentoConIA({ texto: textoLeido, imagenes, archivo: { bytes, tipo: tipoArchivo } }, entrada.tiempoIaMs);
     motivoFallo = respuesta.motivo;
     modeloLigero = esModeloLigero(respuesta.modelo);
-    if (!respuesta.documento && respuesta.transitorio) {
+    if (!respuesta.documento && respuesta.transitorio && !pareceCierre) {
       // El fallo es del proveedor (límite gratuito, saturación): no se guarda una lectura a medias.
       // Sin guardar nada, un correo no se marca como leído y se vuelve a intentar más tarde.
       await supabase.storage.from("documentos").remove([ruta]);
@@ -139,7 +141,7 @@ export async function registrarDocumento(entrada: {
   }
 
   const soloIngresos = ingresos.length > 0 && facturas.length === 0;
-  const tipo = lectura
+  const tipo = lectura || (pareceCierre && facturas.length === 0 && ingresos.length === 0)
     ? "cierre"
     : soloIngresos
       ? "ingresos"

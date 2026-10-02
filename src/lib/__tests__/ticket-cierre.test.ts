@@ -77,3 +77,37 @@ describe("cuadraConCobrado", () => {
     expect(cuadraConCobrado("Total Tickets 10,00", { venta: 10 })).toBe(true);
   });
 });
+
+// Texto de un "Cierres de caja.pdf" real del correo, ordenado por posición (pdf-lineas). Con el
+// orden interno del PDF las cifras salían antes que las etiquetas y la venta se leía como 9,76.
+describe("cierre real del correo", () => {
+  const REAL = `CIERRE DE LA CAJA 1
+Código:57 NUMERO 57
+Fecha inicial: 01/10/2026
+Fecha final: 02/10/2026
+ESTADO DE LA CAJA
+Cobrado Efectivo 55,60
+Cobrado Bancos 276,20
+Total Cobrado 331,80
+VENTAS DEL DIA - MANIPULACION
+Tickets Efectivo 55,60
+Tickets Banco 276,20
+Tickets Pendientes 0,00
+Total Tickets 331,80
+Facturas Efectivo 0,00
+Facturas Banco 0,00
+Total Facturas 0,00
+Ticket/Factura Media 9,76`;
+
+  it("lee venta, efectivo y tarjeta", () => {
+    const t = leerTicketCierre(REAL);
+    expect(t).toMatchObject({ venta: 331.8, efectivo: 55.6, banco: 276.2, ticketMedio: 9.76 });
+    expect(t && ticketCoherente(t) && cuadraConCobrado(REAL, t)).toBe(true);
+  });
+
+  it("la fecha es la inicial aunque la final salga antes en el texto", () => {
+    const invertido = "Fecha final: 02/10/2026\nFecha inicial: 01/10/2026\n" + REAL;
+    expect(leerTicketCierre(invertido)?.fecha).toBe("2026-10-01");
+    expect(leerTicketCierre(REAL)?.fecha).toBe("2026-10-01");
+  });
+});

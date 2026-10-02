@@ -21,8 +21,11 @@ function valorDe(texto: string, etiqueta: string): number | null {
   return coincidencia ? numero(coincidencia[1]) : null;
 }
 
+// La venta es del día de la "Fecha inicial" (el cierre puede imprimirse pasada la medianoche, ya con
+// otra "Fecha final"). Si no hay etiqueta, la primera fecha que aparezca.
 function leerFecha(texto: string): string | null {
-  const coincidencia = texto.match(/\b(\d{2})[/.-](\d{2})[/.-](\d{4})\b/);
+  const coincidencia =
+    texto.match(/fecha\s+inicial\s*:?\s*(\d{2})[/.-](\d{2})[/.-](\d{4})\b/i) ?? texto.match(/\b(\d{2})[/.-](\d{2})[/.-](\d{4})\b/);
   if (!coincidencia) return null;
   const [, dia, mes, anio] = coincidencia;
   const iso = `${anio}-${mes}-${dia}`;
