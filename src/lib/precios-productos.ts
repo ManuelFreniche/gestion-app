@@ -24,6 +24,8 @@ export type FilaProducto = {
   proveedores: number;
   // Es el más barato y hay con qué compararlo.
   masBarato: boolean;
+  // Es el más caro y hay con qué compararlo (si todos cuestan lo mismo, ninguno lo es).
+  masCaro: boolean;
   // Cuánto más caro que el más barato, en %, con un decimal. null si no hay comparación o es el más barato.
   sobreElMasBarato: number | null;
 };
@@ -65,6 +67,7 @@ export function compararProductos(lineas: LineaProducto[]): FilaProducto[] {
   for (const g of grupos.values()) {
     const compras = [...g.compras.values()].sort((a, b) => a.precio - b.precio || a.proveedor.localeCompare(b.proveedor, "es"));
     const minimo = compras[0].precio;
+    const maximo = compras[compras.length - 1].precio;
     const comparable = compras.length > 1;
     for (const c of compras) {
       const esMinimo = c.precio === minimo;
@@ -75,7 +78,8 @@ export function compararProductos(lineas: LineaProducto[]): FilaProducto[] {
         precio: c.precio,
         fecha: c.fecha,
         proveedores: compras.length,
-        masBarato: comparable && esMinimo,
+        masBarato: comparable && esMinimo && maximo !== minimo,
+        masCaro: comparable && c.precio === maximo && maximo !== minimo,
         sobreElMasBarato: comparable && !esMinimo ? Math.round(((c.precio - minimo) / minimo) * 1000) / 10 : null,
       });
     }
@@ -90,6 +94,7 @@ export function compararProductos(lineas: LineaProducto[]): FilaProducto[] {
 }
 
 const VERDE = "FFC6EFCE";
+const ROJO = "FFFFC7CE";
 const dia = (fecha: string) => new Date(`${fecha}T12:00:00Z`);
 
 export async function crearLibroProductos(negocio: string, filas: FilaProducto[]): Promise<Buffer> {
@@ -115,16 +120,16 @@ export async function crearLibroProductos(negocio: string, filas: FilaProducto[]
         ? `${f.sobreElMasBarato.toLocaleString("es-ES", { maximumFractionDigits: 1 })} % más caro que el más barato`
         : "Solo un proveedor";
     const fila = h.addRow({ producto: f.producto, unidad: f.unidad, proveedor: f.proveedor, precio: f.precio, fecha: dia(f.fecha), comparacion });
-    if (f.masBarato) {
+    if (f.masBarato || f.masCaro) {
       fila.eachCell((celda) => {
-        celda.fill = { type: "pattern", pattern: "solid", fgColor: { argb: VERDE } };
+        celda.fill = { type: "pattern", pattern: "solid", fgColor: { argb: f.masBarato ? VERDE : ROJO } };
       });
       fila.font = { bold: true };
     }
   }
 
   h.addRow([]);
-  h.addRow(["En verde: el proveedor más barato de ese producto. Solo se compara si hay dos o más proveedores con la misma unidad."]).font = {
+  h.addRow(["En verde: el proveedor más barato de ese producto. En rojo: el más caro. Solo se compara si hay dos o más proveedores con la misma unidad."]).font = {
     italic: true,
   };
 

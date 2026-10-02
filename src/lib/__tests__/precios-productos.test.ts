@@ -16,9 +16,9 @@ const linea = (extra: Partial<LineaProducto>): LineaProducto => ({
 describe("compararProductos", () => {
   it("marca el más barato cuando hay dos proveedores", () => {
     const f = compararProductos([linea({ precio_unitario: 1.2 }), linea({ proveedor: "Covap", precio_unitario: 0.9 })]);
-    expect(f.map((x) => [x.proveedor, x.masBarato, x.sobreElMasBarato])).toEqual([
-      ["Covap", true, null],
-      ["Lactalis", false, 33.3],
+    expect(f.map((x) => [x.proveedor, x.masBarato, x.masCaro, x.sobreElMasBarato])).toEqual([
+      ["Covap", true, false, null],
+      ["Lactalis", false, true, 33.3],
     ]);
   });
 
@@ -60,6 +60,24 @@ describe("compararProductos", () => {
     expect(f[0].precio).toBe(2.5);
   });
 
+  it("con tres proveedores, solo el del medio se queda sin color", () => {
+    const f = compararProductos([
+      linea({ precio_unitario: 1 }),
+      linea({ proveedor: "Covap", precio_unitario: 2 }),
+      linea({ proveedor: "Otro", precio_unitario: 3 }),
+    ]);
+    expect(f.map((x) => [x.masBarato, x.masCaro])).toEqual([
+      [true, false],
+      [false, false],
+      [false, true],
+    ]);
+  });
+
+  it("si todos cuestan lo mismo, no hay ni más barato ni más caro", () => {
+    const f = compararProductos([linea({}), linea({ proveedor: "Covap" })]);
+    expect(f.some((x) => x.masBarato || x.masCaro)).toBe(false);
+  });
+
   it("si dos proveedores empatan en el más barato, los dos salen marcados", () => {
     const f = compararProductos([linea({}), linea({ proveedor: "Covap" }), linea({ proveedor: "Otro", precio_unitario: 2 })]);
     expect(f.filter((x) => x.masBarato)).toHaveLength(2);
@@ -73,7 +91,7 @@ describe("compararProductos", () => {
 });
 
 describe("crearLibroProductos", () => {
-  it("pinta de verde la fila más barata y no las demás", async () => {
+  it("pinta de verde la fila más barata y de rojo la más cara", async () => {
     const filas = compararProductos([linea({ precio_unitario: 1.2 }), linea({ proveedor: "Covap", precio_unitario: 0.9 })]);
     const libro = new ExcelJS.Workbook();
     await libro.xlsx.load((await crearLibroProductos("Alpino's", filas)) as never);
@@ -81,7 +99,7 @@ describe("crearLibroProductos", () => {
     const verde = (fila: number) => (h.getRow(fila).getCell(1).fill as ExcelJS.FillPattern | undefined)?.fgColor?.argb;
     expect(h.getRow(2).getCell(3).value).toBe("Covap");
     expect(verde(2)).toBe("FFC6EFCE");
-    expect(verde(3)).toBeUndefined();
+    expect(verde(3)).toBe("FFFFC7CE");
     expect(h.getRow(2).getCell(6).value).toBe("Más barato");
   });
 });

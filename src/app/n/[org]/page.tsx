@@ -21,6 +21,7 @@ export default async function InicioNegocio({ params }: PageProps<"/n/[org]">) {
 
   const verVentas = negocio.permisos.has("ventas.ver");
   const verGastos = negocio.permisos.has("facturas.ver") && negocio.permisos.has("gastos.ver");
+  const verProductos = negocio.permisos.has("exportar.usar") && negocio.permisos.has("facturas.ver");
   const verBandeja = negocio.permisos.has("documentos.revisar") && negocio.modulosActivos.includes("bandeja");
 
   const [ventasRes, gastosRes, bandejaRes] = await Promise.all([
@@ -84,6 +85,15 @@ export default async function InicioNegocio({ params }: PageProps<"/n/[org]">) {
             </p>
           )}
         </Tarjeta>
+      )}
+
+      {verProductos && (
+        <a
+          href={`/n/${org}/gastos/productos`}
+          className="flex h-14 items-center justify-center rounded-xl bg-primario px-4 text-lg font-semibold text-primario-texto"
+        >
+          Excel de productos y precios
+        </a>
       )}
 
       <div className="grid gap-4 sm:grid-cols-2">

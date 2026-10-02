@@ -97,15 +97,6 @@ export default async function PaginaGastos({ params, searchParams }: PageProps<"
         </a>
       )}
 
-      {puedeExportar && (
-        <a
-          href={`/n/${org}/gastos/productos`}
-          className="flex h-14 items-center justify-center rounded-xl border border-borde px-4 text-lg font-semibold"
-        >
-          Excel de productos y precios
-        </a>
-      )}
-
       {resumen.porCategoria.length > 0 ? (
         <Tarjeta className="flex flex-col gap-4">
           <h2 className="font-semibold">Por categoría</h2>
