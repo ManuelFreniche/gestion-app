@@ -5,10 +5,12 @@ import { VERSION_LECTURA_CIERRE, type CierrePendiente } from "@/lib/cierres-band
 import { faltanVariablesCorreo } from "@/lib/correo";
 import { claveFactura, type FacturaDatos } from "@/lib/factura";
 import { hayIA, type IngresoDia } from "@/lib/leer-documento-ia";
+import { resumenMetido, type DiaMetido, type FacturaMetida } from "@/lib/metidos";
 import { exigirPermiso } from "@/lib/negocio";
 import { crearClienteServidor } from "@/lib/supabase/server";
 import { versionDesplegada } from "@/lib/version";
 import { Descartados, type Descartado } from "./descartados";
+import { Metidos, type Metido } from "./metidos";
 import { RevisarCorreo } from "./revisar-correo";
 import { SubirTickets } from "./subir";
 import { TarjetaCierres } from "./tarjeta-cierres";
@@ -19,6 +21,9 @@ export const maxDuration = 60;
 
 // Cuántos documentos pendientes se enseñan a la vez (cada día entran pocos; esto cubre un mes de cierres).
 const MAX_PENDIENTES = 60;
+
+// Cuántos documentos ya metidos se enseñan para poder deshacerlos.
+const MAX_METIDOS = 30;
 
 // Resumen corto de lo leído: cambia cuando cambia lo leído, y así las tarjetas se redibujan con lo nuevo
 // (si no, un formulario ya abierto seguiría enseñando los datos de antes).
@@ -186,6 +191,39 @@ export default async function PaginaBandeja({ params }: PageProps<"/n/[org]/band
     descartado: d.revisado_en ? soloDia.format(new Date(d.revisado_en)) : "—",
   }));
 
+  // Lo último que se metió desde la Bandeja, con lo que hay ahora en Ventas y en Facturas por su culpa, para
+  // poder deshacerlo si entró mal. Solo lo ve quien puede deshacer.
+  const metidosVista: Metido[] = [];
+  if (negocio.permisos.has("documentos.deshacer")) {
+    const { data: aprobados } = await supabase
+      .from("documentos_entrantes")
+      .select("id, tipo, archivo_nombre, revisado_en")
+      .eq("organizacion_id", org)
+      .eq("estado", "aprobado")
+      .order("revisado_en", { ascending: false, nullsFirst: false })
+      .limit(MAX_METIDOS);
+    const ids = (aprobados ?? []).map((d) => d.id);
+    if (ids.length > 0) {
+      const [diasBd, facturasBd] = await Promise.all([
+        supabase.from("cierres_diarios").select("documento_id, fecha, venta").eq("organizacion_id", org).in("documento_id", ids),
+        supabase.from("facturas_recibidas").select("documento_id, proveedor, importe, estado_pago").eq("organizacion_id", org).in("documento_id", ids),
+      ]);
+      const dias: DiaMetido[] = (diasBd.data ?? []).flatMap((c) =>
+        c.documento_id ? [{ documentoId: c.documento_id, fecha: c.fecha, venta: Number(c.venta) }] : [],
+      );
+      const facturas: FacturaMetida[] = (facturasBd.data ?? []).flatMap((f) =>
+        f.documento_id ? [{ documentoId: f.documento_id, proveedor: f.proveedor, importe: Number(f.importe), pagada: f.estado_pago === "pagada" }] : [],
+      );
+      for (const d of aprobados ?? []) {
+        metidosVista.push({
+          ...resumenMetido({ id: d.id, tipo: d.tipo, nombre: d.archivo_nombre }, dias, facturas),
+          nombre: d.archivo_nombre,
+          metido: d.revisado_en ? dia.format(new Date(d.revisado_en)) : "—",
+        });
+      }
+    }
+  }
+
   const total = cierres.length + documentos.length;
 
   return (
@@ -244,6 +282,8 @@ export default async function PaginaBandeja({ params }: PageProps<"/n/[org]/band
       {documentos.map((documento) => (
         <TarjetaDocumento key={documento.clave} org={org} documento={documento} locales={locales.data ?? []} hoy={hoy} />
       ))}
+
+      <Metidos org={org} documentos={metidosVista} />
 
       <Descartados org={org} documentos={descartadosVista} />
 

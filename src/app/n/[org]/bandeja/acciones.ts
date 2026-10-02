@@ -3,11 +3,13 @@
 import { revalidatePath } from "next/cache";
 import { esFecha, hoyEn, leerImporte, leerImporteConSigno } from "@/lib/cierre";
 import { CATEGORIAS, type FacturaDatos } from "@/lib/factura";
+import { FACTURA_REPETIDA, mensajeDeLaRegla, mensajeDeshacer } from "@/lib/errores-bandeja";
 import { leerLoteCierres } from "@/lib/lote-cierres";
+import { mensajeDeshecho } from "@/lib/metidos";
 import { releerDocumento } from "@/lib/registrar-documento";
 import { crearClienteServidor } from "@/lib/supabase/server";
 
-export type EstadoBandeja = { error?: string; ok?: boolean; metidos?: number };
+export type EstadoBandeja = { error?: string; ok?: boolean; metidos?: number; mensaje?: string };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -41,11 +43,12 @@ export async function aprobarCierres(_: EstadoBandeja, formData: FormData): Prom
     const dia = fila.fecha.split("-").reverse().join("/");
     fallos.push(
       `${dia}: ${
-        error.code === "P0002"
+        mensajeDeLaRegla(error) ??
+        (error.code === "P0002"
           ? "ese cierre ya se revisó (recarga la página)"
           : error.code === "42501"
             ? "no tienes permiso para meter cierres"
-            : "no se pudo meter, inténtalo de nuevo"
+            : "no se pudo meter, inténtalo de nuevo")
       }`,
     );
   }
@@ -112,11 +115,14 @@ export async function aprobarFacturas(_: EstadoBandeja, formData: FormData): Pro
   if (error) {
     return {
       error:
-        error.code === "P0002"
-          ? "Esta factura ya se revisó. Recarga la página."
-          : error.code === "42501"
-            ? "No tienes permiso para meter facturas."
-            : "No se pudo meter la factura. Inténtalo de nuevo.",
+        error.code === "23505"
+          ? FACTURA_REPETIDA
+          : (mensajeDeLaRegla(error) ??
+            (error.code === "P0002"
+              ? "Esta factura ya se revisó. Recarga la página."
+              : error.code === "42501"
+                ? "No tienes permiso para meter facturas."
+                : "No se pudo meter la factura. Inténtalo de nuevo.")),
     };
   }
 
@@ -164,11 +170,12 @@ export async function aprobarIngresos(_: EstadoBandeja, formData: FormData): Pro
   if (error) {
     return {
       error:
-        error.code === "P0002"
+        mensajeDeLaRegla(error) ??
+        (error.code === "P0002"
           ? "Esta hoja ya se revisó. Recarga la página."
           : error.code === "42501"
             ? "No tienes permiso para meter ventas."
-            : "No se pudo meter la hoja. Inténtalo de nuevo.",
+            : "No se pudo meter la hoja. Inténtalo de nuevo."),
     };
   }
   revalidatePath(`/n/${org}/ventas`);
@@ -232,4 +239,22 @@ export async function descartarDocumento(_: EstadoBandeja, formData: FormData): 
   // Las facturas muestran "Descartada" en su propia tarjeta; el resto desaparece de la lista.
   if (formData.get("mantener") !== "1") revalidatePath(`/n/${org}/bandeja`);
   return { ok: true };
+}
+
+// Quita de Ventas y de Facturas lo que metió un documento aprobado y lo devuelve a la Bandeja. La base de
+// datos comprueba el permiso y que no se pierda nada sin avisar (notas, sabores, facturas pagadas).
+export async function deshacerDocumentoAccion(_: EstadoBandeja, formData: FormData): Promise<EstadoBandeja> {
+  const org = String(formData.get("org") ?? "");
+  const documento = String(formData.get("documento") ?? "");
+  if (!UUID.test(org) || !UUID.test(documento)) return { error: "Algo ha ido mal. Recarga la página." };
+
+  const supabase = await crearClienteServidor();
+  const { data, error } = await supabase.rpc("deshacer_documento", { p_documento: documento });
+  if (error) return { error: mensajeDeshacer(error) };
+
+  revalidatePath(`/n/${org}/bandeja`);
+  revalidatePath(`/n/${org}/ventas`);
+  revalidatePath(`/n/${org}/facturas`);
+  revalidatePath(`/n/${org}/gastos`);
+  return { ok: true, mensaje: mensajeDeshecho(data as { cierres?: number; facturas?: number } | null) };
 }

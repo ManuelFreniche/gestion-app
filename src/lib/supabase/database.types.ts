@@ -637,6 +637,10 @@ export type Database = {
         Args: { p_local?: string; p_nombre: string }
         Returns: string
       }
+      deshacer_documento: {
+        Args: { p_documento: string }
+        Returns: Json
+      }
       guardar_cierre: {
         Args: {
           p_fecha: string
