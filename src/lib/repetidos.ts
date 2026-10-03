@@ -35,3 +35,41 @@ export function cierreRepetido(nuevo: { fecha?: unknown; venta?: unknown }, cono
   const { fecha, venta } = nuevo;
   return conocidos.some((c) => c.fecha === fecha && centimos(c.venta) === centimos(venta));
 }
+
+export type PendienteBandeja = { id: string; tipo: string; datos: unknown };
+
+// Entre los documentos que ya esperan en la Bandeja (del más antiguo al más nuevo), cuáles sobran: los que repiten
+// algo ya registrado en las cuentas o un documento pendiente más antiguo. Siempre se conserva el primero.
+// Un documento con una parte ya decidida (`partes`) no se toca.
+export function pendientesRepetidos(
+  pendientes: PendienteBandeja[],
+  registradas: { facturas: Set<string>; cierres: { fecha: string; venta: number }[] },
+): string[] {
+  const facturas = new Set(registradas.facturas);
+  const cierres = [...registradas.cierres];
+  const sobran: string[] = [];
+
+  for (const doc of pendientes) {
+    const datos = (doc.datos ?? {}) as { facturas?: FacturaDatos[]; fecha?: unknown; venta?: unknown; partes?: unknown };
+    if (datos.partes && Object.keys(datos.partes as object).length > 0) continue;
+
+    if (doc.tipo === "factura") {
+      const lista = Array.isArray(datos.facturas) ? datos.facturas : [];
+      if (facturasRepetidas(lista, facturas)) {
+        sobran.push(doc.id);
+        continue;
+      }
+      for (const f of lista) {
+        const clave = claveContenido(f);
+        if (clave) facturas.add(clave);
+      }
+    } else if (doc.tipo === "cierre") {
+      if (cierreRepetido(datos, cierres)) {
+        sobran.push(doc.id);
+        continue;
+      }
+      if (typeof datos.fecha === "string" && typeof datos.venta === "number") cierres.push({ fecha: datos.fecha, venta: datos.venta });
+    }
+  }
+  return sobran;
+}
