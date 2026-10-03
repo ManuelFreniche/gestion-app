@@ -319,6 +319,53 @@ export type Database = {
           },
         ]
       }
+      invitaciones: {
+        Row: {
+          caduca_en: string
+          codigo_hash: string
+          creada_en: string
+          creada_por: string | null
+          etiqueta: string
+          id: string
+          organizacion_id: string
+          rol: Database["public"]["Enums"]["rol_miembro"]
+          usada_en: string | null
+          usada_por: string | null
+        }
+        Insert: {
+          caduca_en?: string
+          codigo_hash: string
+          creada_en?: string
+          creada_por?: string | null
+          etiqueta: string
+          id?: string
+          organizacion_id: string
+          rol: Database["public"]["Enums"]["rol_miembro"]
+          usada_en?: string | null
+          usada_por?: string | null
+        }
+        Update: {
+          caduca_en?: string
+          codigo_hash?: string
+          creada_en?: string
+          creada_por?: string | null
+          etiqueta?: string
+          id?: string
+          organizacion_id?: string
+          rol?: Database["public"]["Enums"]["rol_miembro"]
+          usada_en?: string | null
+          usada_por?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "invitaciones_organizacion_id_fkey"
+            columns: ["organizacion_id"]
+            isOneToOne: false
+            referencedRelation: "organizaciones"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       locales: {
         Row: {
           creado_en: string
@@ -607,6 +654,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      aceptar_invitacion: { Args: { p_codigo: string }; Returns: string }
       aprobar_cierre: {
         Args: {
           p_banco?: number
@@ -640,6 +688,16 @@ export type Database = {
       deshacer_documento: {
         Args: { p_documento: string }
         Returns: Json
+      }
+      equipo_del_negocio: {
+        Args: { p_organizacion: string }
+        Returns: {
+          correo: string
+          creado_en: string
+          nombre: string
+          rol: Database["public"]["Enums"]["rol_miembro"]
+          usuario_id: string
+        }[]
       }
       guardar_cierre: {
         Args: {

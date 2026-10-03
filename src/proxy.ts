@@ -1,4 +1,5 @@
 import { createServerClient } from "@supabase/ssr";
+import { destinoSeguro } from "@/lib/destino-invitacion";
 import { COOKIE_SESION_TEMPORAL, opcionesSesion } from "@/lib/supabase/cookies";
 import { NextResponse, type NextRequest } from "next/server";
 
@@ -40,6 +41,9 @@ export async function proxy(request: NextRequest) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     url.search = "";
+    // Con un enlace de invitación se vuelve a él después de iniciar sesión o crear la cuenta.
+    const siguiente = destinoSeguro(pathname);
+    if (siguiente) url.searchParams.set("siguiente", siguiente);
     return NextResponse.redirect(url);
   }
 

@@ -4,7 +4,7 @@ import { useActionState, useState } from "react";
 import { Aviso, Boton, Campo, Etiqueta } from "@/components/ui";
 import { crearCuenta, entrar, type EstadoLogin } from "./acciones";
 
-export function FormularioLogin() {
+export function FormularioLogin({ siguiente }: { siguiente: string | null }) {
   const [modo, setModo] = useState<"entrar" | "registro">("entrar");
   const [estado, accion, enviando] = useActionState<EstadoLogin, FormData>(
     modo === "entrar" ? entrar : crearCuenta,
@@ -13,6 +13,7 @@ export function FormularioLogin() {
 
   return (
     <form action={accion} className="flex flex-col gap-4">
+      {siguiente && <input type="hidden" name="siguiente" value={siguiente} />}
       {modo === "registro" && (
         <div className="flex flex-col gap-1.5">
           <Etiqueta htmlFor="nombre">Tu nombre</Etiqueta>
