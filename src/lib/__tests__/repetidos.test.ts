@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FacturaDatos } from "../factura";
-import { cierreRepetido, claveContenido, facturasRepetidas } from "../repetidos";
+import { cierreRepetido, claveContenido, facturasRepetidas, pendientesRepetidos } from "../repetidos";
 
 const f = (extra: Partial<FacturaDatos> = {}): FacturaDatos => ({
   proveedor: "Lactalis S.L.",
@@ -59,5 +59,26 @@ describe("cierreRepetido", () => {
   it("otro día no lo es, ni un cierre sin leer", () => {
     expect(cierreRepetido({ fecha: "2026-09-29", venta: 220.6 }, conocidos)).toBe(false);
     expect(cierreRepetido({}, conocidos)).toBe(false);
+  });
+});
+
+describe("pendientesRepetidos", () => {
+  const registradas = { facturas: new Set<string>(), cierres: [] as { fecha: string; venta: number }[] };
+  const doc = (id: string, facturas: FacturaDatos[]) => ({ id, tipo: "factura", datos: { facturas } });
+  const cierre = (id: string, fecha: string, venta: number) => ({ id, tipo: "cierre", datos: { fecha, venta } });
+
+  it("conserva el primero y descarta los siguientes iguales", () => {
+    expect(pendientesRepetidos([doc("a", [f()]), doc("b", [f()]), doc("c", [f()])], registradas)).toEqual(["b", "c"]);
+  });
+  it("descarta lo que ya está registrado en las cuentas", () => {
+    const r = { facturas: new Set([claveContenido(f())!]), cierres: [{ fecha: "2026-09-30", venta: 10 }] };
+    expect(pendientesRepetidos([doc("a", [f()]), cierre("b", "2026-09-30", 10), cierre("c", "2026-09-30", 11)], r)).toEqual(["a", "b"]);
+  });
+  it("no toca lo distinto ni los documentos con una parte ya decidida", () => {
+    const decidido = { id: "d", tipo: "factura", datos: { facturas: [f()], partes: { facturas: "descartada" } } };
+    expect(pendientesRepetidos([doc("a", [f()]), doc("b", [f({ importe: 5 })]), decidido], registradas)).toEqual([]);
+  });
+  it("un cierre y una factura nunca se confunden y los de otro tipo se ignoran", () => {
+    expect(pendientesRepetidos([cierre("a", "2026-09-30", 10), doc("b", [f()]), { id: "c", tipo: "ingresos", datos: {} }], registradas)).toEqual([]);
   });
 });

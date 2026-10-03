@@ -7,6 +7,7 @@ import { FACTURA_REPETIDA, mensajeDeLaRegla, mensajeDeshacer } from "@/lib/error
 import { leerLoteCierres } from "@/lib/lote-cierres";
 import { mensajeDeshecho } from "@/lib/metidos";
 import { releerDocumento } from "@/lib/registrar-documento";
+import { claveContenido, pendientesRepetidos } from "@/lib/repetidos";
 import { crearClienteServidor } from "@/lib/supabase/server";
 
 export type EstadoBandeja = { error?: string; ok?: boolean; metidos?: number; mensaje?: string };
@@ -257,4 +258,63 @@ export async function deshacerDocumentoAccion(_: EstadoBandeja, formData: FormDa
   revalidatePath(`/n/${org}/facturas`);
   revalidatePath(`/n/${org}/gastos`);
   return { ok: true, mensaje: mensajeDeshecho(data as { cierres?: number; facturas?: number } | null) };
+}
+
+// Descarta de golpe lo que ya estaba esperando en la Bandeja y está repetido: una factura (mismo proveedor, día e
+// importe) o un cierre (mismo día y misma venta) que ya está en las cuentas o en otro documento pendiente más
+// antiguo. Siempre se conserva el primero. Lo descartado se puede recuperar en «Descartados».
+export async function descartarRepetidosAccion(_: EstadoBandeja, formData: FormData): Promise<EstadoBandeja> {
+  const org = String(formData.get("org") ?? "");
+  if (!UUID.test(org)) return { error: "Algo ha ido mal. Recarga la página." };
+
+  const supabase = await crearClienteServidor();
+  const { data: pendientes, error } = await supabase
+    .from("documentos_entrantes")
+    .select("id, tipo, datos")
+    .eq("organizacion_id", org)
+    .eq("estado", "pendiente")
+    .in("tipo", ["factura", "cierre"])
+    .order("recibido_en", { ascending: true })
+    .limit(500);
+  if (error) return { error: "No se pudo comprobar. Inténtalo de nuevo." };
+  if (!pendientes || pendientes.length < 2) return { ok: true, metidos: 0, mensaje: "No hay repetidos." };
+
+  const [facturas, cierres] = await Promise.all([
+    supabase.from("facturas_recibidas").select("proveedor, fecha, importe").eq("organizacion_id", org).limit(5000),
+    supabase.from("cierres_diarios").select("fecha, venta").eq("organizacion_id", org).limit(5000),
+  ]);
+  if (facturas.error || cierres.error) return { error: "No se pudo comprobar. Inténtalo de nuevo." };
+
+  const claves = new Set<string>();
+  for (const f of facturas.data ?? []) {
+    const clave = claveContenido({ ...f, importe: Number(f.importe) });
+    if (clave) claves.add(clave);
+  }
+  const sobran = pendientesRepetidos(pendientes, {
+    facturas: claves,
+    cierres: (cierres.data ?? []).map((c) => ({ fecha: c.fecha, venta: Number(c.venta) })),
+  });
+  if (sobran.length === 0) return { ok: true, metidos: 0, mensaje: "No hay repetidos." };
+
+  const ahora = new Date().toISOString();
+  let descartados = 0;
+  for (const id of sobran) {
+    const datos = pendientes.find((p) => p.id === id)?.datos;
+    const { data: hecho, error: fallo } = await supabase
+      .from("documentos_entrantes")
+      .update({ estado: "descartado", revisado_en: ahora, datos: { ...((datos ?? {}) as object), descartado_por: "repetido" } as never })
+      .eq("id", id)
+      .eq("organizacion_id", org)
+      .eq("estado", "pendiente")
+      .select("id");
+    if (!fallo && hecho && hecho.length > 0) descartados++;
+  }
+
+  revalidatePath(`/n/${org}/bandeja`);
+  if (descartados === 0) return { error: "No se pudo descartar. Inténtalo de nuevo." };
+  return {
+    ok: true,
+    metidos: descartados,
+    mensaje: `He descartado ${descartados} ${descartados === 1 ? "repetido" : "repetidos"}. Los tienes en «Descartados recientes» por si alguno no lo era.`,
+  };
 }

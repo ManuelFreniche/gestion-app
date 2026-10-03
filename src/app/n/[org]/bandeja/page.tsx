@@ -9,6 +9,7 @@ import { resumenMetido, type DiaMetido, type FacturaMetida } from "@/lib/metidos
 import { exigirPermiso } from "@/lib/negocio";
 import { crearClienteServidor } from "@/lib/supabase/server";
 import { versionDesplegada } from "@/lib/version";
+import { DescartarRepetidos } from "./descartar-repetidos";
 import { Descartados, type Descartado } from "./descartados";
 import { Metidos, type Metido } from "./metidos";
 import { RevisarCorreo } from "./revisar-correo";
@@ -265,6 +266,7 @@ export default async function PaginaBandeja({ params }: PageProps<"/n/[org]/band
       )}
 
       {total > 0 && <h2 className="text-2xl font-bold">Por revisar ({total}{hayMas > 0 ? ` de ${total + hayMas}` : ""})</h2>}
+      {total > 1 && <DescartarRepetidos org={org} />}
       {hayMas > 0 && (
         <p className="text-base text-texto-suave">
           Enseño los {MAX_PENDIENTES} más recientes; cuando metas o descartes alguno verás los siguientes.
