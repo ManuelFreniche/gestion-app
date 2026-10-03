@@ -49,3 +49,23 @@ export async function borrarFactura(formData: FormData): Promise<void> {
   }
   revalidatePath(`/n/${org}/facturas`);
 }
+
+export type EstadoMarcarTodas = { error?: string; marcadas?: number };
+
+// Marca como pagadas todas las facturas que siguen pendientes. Se puede deshacer una a una con «Marcar pendiente».
+export async function marcarTodasPagadas(_: EstadoMarcarTodas, formData: FormData): Promise<EstadoMarcarTodas> {
+  const org = String(formData.get("org") ?? "");
+  if (!UUID.test(org)) return { error: "Algo ha ido mal. Recarga la página." };
+
+  const supabase = await crearClienteServidor();
+  const { data, error } = await supabase
+    .from("facturas_recibidas")
+    .update({ estado_pago: "pagada" })
+    .eq("organizacion_id", org)
+    .eq("estado_pago", "pendiente")
+    .select("id");
+  if (error) return { error: "No se pudieron marcar. Inténtalo de nuevo." };
+
+  revalidatePath(`/n/${org}/facturas`);
+  return { marcadas: data?.length ?? 0 };
+}
