@@ -189,7 +189,7 @@ export function facturaDesdeReglas(l: FacturaLeida): FacturaDatos {
 // forma fiable de saber si ya existe, así que devuelve null.
 // El proveedor se compara sin mayúsculas, tildes, puntuación ni forma societaria: "AFICOS ABOGADOS Y ASESORES S.L."
 // y "Aficos Abogados y Asesores SL" son el mismo.
-function proveedorNormalizado(nombre?: string | null): string | undefined {
+export function proveedorNormalizado(nombre?: string | null): string | undefined {
   const t = quitarTildes((nombre ?? "").toLowerCase())
     .replace(/[.,;:()"']/g, " ")
     .replace(/\s+/g, " ")

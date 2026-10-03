@@ -53,6 +53,7 @@ vi.mock("../supabase/server", () => ({
           c.filtros[k] = v;
           return b;
         },
+        limit: () => b,
         maybeSingle: resolver,
         then: (ok: (v: unknown) => unknown, ko?: (e: unknown) => unknown) => resolver().then(ok, ko),
       };
@@ -257,6 +258,49 @@ describe("interpretarDocumento", () => {
     expect(String(datos.aviso)).toContain("más sencillo");
   });
 
+  describe("facturas repetidas", () => {
+    const leer = () => {
+      ia.activa = true;
+      ia.leer.mockResolvedValue({
+        modelo: "gemini-3.5-flash",
+        documento: {
+          tipo: "facturas",
+          ticket: null,
+          facturas: [{ proveedor: "Hogar Hotel S.L.", fecha: "2026-09-01", importe: 0.89, categoria: "Suministros", lineas: [] }],
+          ingresos: [],
+        },
+      });
+      falso.archivo = pdf([["Factura Hogar Hotel", 20, 360]]);
+    };
+
+    it("la misma factura (proveedor, día e importe) que ya está registrada entra descartada", async () => {
+      leer();
+      falso.responder = (c) =>
+        (c as Consulta).tabla === "facturas_recibidas" ? { data: [{ proveedor: "hogar hotel", fecha: "2026-09-01", importe: 0.89 }], error: null } : { data: null, error: null };
+      const r = await registrarDocumento(entrada);
+      expect(r.estado).toBe("repetido");
+      expect(insercion()!.valores).toMatchObject({ estado: "descartado", tipo: "factura", datos: { descartado_por: "repetido" } });
+    });
+
+    it("la misma factura que otro documento pendiente también entra descartada", async () => {
+      leer();
+      falso.responder = (c) =>
+        (c as Consulta).tabla === "documentos_entrantes" && (c as Consulta).filtros.tipo === "factura"
+          ? { data: [{ datos: { facturas: [{ proveedor: "Hogar Hotel", fecha: "2026-09-01", importe: 0.89 }] } }], error: null }
+          : { data: null, error: null };
+      const r = await registrarDocumento(entrada);
+      expect(r.estado).toBe("repetido");
+    });
+
+    it("con otro importe queda pendiente", async () => {
+      leer();
+      falso.responder = (c) =>
+        (c as Consulta).tabla === "facturas_recibidas" ? { data: [{ proveedor: "hogar hotel", fecha: "2026-09-01", importe: 5 }], error: null } : { data: null, error: null };
+      const r = await registrarDocumento(entrada);
+      expect(r.estado).toBe("pendiente");
+    });
+  });
+
   it("cuando se agota el cupo del día, el mensaje dice cuándo volver a probar", async () => {
     ia.activa = true;
     ia.leer.mockResolvedValue({ documento: null, motivo: "Gemini respondió 429", transitorio: true, causa: "dia" });
@@ -300,6 +344,28 @@ describe("registrarDocumento", () => {
     const fila = insercion()!.valores as { tipo: string; datos: Record<string, unknown>; origen: string };
     expect(fila).toMatchObject({ tipo: "cierre", origen: "correo", datos: { venta: 331.8, efectivo: 55.6, banco: 276.2, fecha: "2026-10-01" } });
     expect(falso.consultas.some((c) => (c as Consulta).tabla === "cierres_diarios" && (c as Consulta).op !== "select")).toBe(false);
+  });
+
+  it("un cierre del mismo día y la misma venta que ya está en Ventas entra descartado, sin gastar nada", async () => {
+    falso.responder = (c) => ((c as Consulta).tabla === "cierres_diarios" ? { data: [{ fecha: "2026-10-01", venta: 331.8 }], error: null } : { data: null, error: null });
+    const r = await registrarDocumento(entrada);
+    expect(r.estado).toBe("repetido");
+    expect(r.detalle).toMatch(/descartado/);
+    expect(insercion()!.valores).toMatchObject({ estado: "descartado", datos: { descartado_por: "repetido", venta: 331.8 } });
+    expect(falso.borrados).toEqual([]);
+  });
+
+  it("un cierre del mismo día con otra venta no se descarta: lo decide una persona", async () => {
+    falso.responder = (c) => ((c as Consulta).tabla === "cierres_diarios" ? { data: [{ fecha: "2026-10-01", venta: 100 }], error: null } : { data: null, error: null });
+    const r = await registrarDocumento(entrada);
+    expect(r.estado).toBe("pendiente");
+    expect((insercion()!.valores as { estado?: string }).estado).toBeUndefined();
+  });
+
+  it("si no se puede comprobar si está repetido, no se descarta nada", async () => {
+    falso.responder = (c) => ((c as Consulta).tabla === "cierres_diarios" ? { data: null, error: { code: "XX000" } } : { data: null, error: null });
+    const r = await registrarDocumento(entrada);
+    expect(r.estado).toBe("pendiente");
   });
 
   it("en una subida a mano ignora el texto desordenado del navegador y lee el PDF por posición", async () => {
